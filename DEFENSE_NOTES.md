@@ -65,4 +65,4 @@ One warehouse-product row is deliberately serialized. Queueing and admission con
 
 **What exactly is implemented?**
 
-The schema, reservation and completion functions, idempotent adjustments, audit/outbox records, expiry query, demo, and tests. Replication deployment, automatic failover, transfer orchestration, broker consumers, and sharded sagas are design specifications.
+The schema, reservation and completion functions, idempotent adjustments, audit/outbox records, expiry query, demo, and tests. Docker deploys a primary and an asynchronous streaming replica. The Python client checks WAL replay, waits within a budget, falls back to the primary, and validates post-commit read tokens. Transfer functions implement idempotent dispatch, verified receipt, cancellation, and loss. Automatic failover, external broker consumers, and sharded sagas remain design specifications.

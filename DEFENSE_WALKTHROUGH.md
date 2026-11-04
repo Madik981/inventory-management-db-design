@@ -4,7 +4,7 @@
 
 Docker Compose provides PostgreSQL and its psql client. The complete manual demonstration below needs only Docker Desktop and a terminal. Neither a host PostgreSQL server nor a host psql installation is required. A graphical SQL editor is optional.
 
-The executable demonstration covers the schema, warehouse partitions, transactions, conditional updates, idempotency, reservation expiry, stock adjustments, audit events, rollback, and two competing database sessions. Replication, automated failover, physical sharding, transfer orchestration, and a broker remain design topics in the report. This single-container demonstration does not prove 10,000 updates per second.
+The executable demonstration covers the schema, warehouse partitions, transactions, conditional updates, idempotency, reservation expiry, stock adjustments, audit events, rollback, and two competing database sessions. Docker Compose also starts an asynchronous read replica. The README gives transfer commands and the Python replication suite demonstrates replay lag and primary fallback. Automated failover, physical sharding, broker delivery, and target-scale performance remain further deployment work.
 
 ## Prepare a clean demonstration
 
@@ -74,7 +74,7 @@ Optionally, use a third terminal while B is waiting:
 docker compose exec -T db psql -X -U postgres -d inventory_defense -P pager=off -f /defense/sql/defense_observer.sql
 ```
 
-Terminal B should have wait_event_type = Lock and a nonempty blocking_sessions array. The observer also makes deployment scope explicit: is_read_replica = false and connected_replication_standbys = 0.
+Terminal B should have wait_event_type = Lock and a nonempty blocking_sessions array. On the primary, the observer reports is_read_replica = false and connected_replication_standbys = 1 once streaming is established.
 
 Return to A and execute COMMIT. B resumes, rechecks availability against A's committed update, and raises Insufficient stock. In B, execute ROLLBACK to clear the failed transaction, then run its verification queries. losing_order_rows must be zero and available must be zero.
 

@@ -1,0 +1,57 @@
+Inventory Management verification
+Verification date 2026-11-04 (Asia/Qyzylorda)
+Topology PostgreSQL 17 primary with an asynchronous physical standby
+
+Command python tests/verify.py
+PASS 20 simultaneous buyers produce one reservation for one item
+PASS All losing buyers receive an explicit insufficient stock error
+PASS Concurrent duplicate confirmations consume stock once
+PASS Concurrent duplicate reservation requests reserve only once
+PASS Reusing an order ID with changed items is rejected
+PASS Duplicate cancellation releases stock once
+PASS A failed multiwarehouse reservation rolls back all earlier items
+PASS Expiry and late confirmation cannot both consume or release stock
+PASS Duplicate concurrent deliveries add physical stock once
+PASS Negative adjustments cannot consume reserved units
+PASS Transaction rollback leaves no held stock
+PASS Early expiry does not release a valid reservation
+PASS Cancellation after confirmation does not recreate sold stock
+PASS Concurrent transfer requests create one transfer without moving stock
+PASS Changed transfer payload is rejected
+PASS Receipt before dispatch is rejected
+PASS Rolled-back dispatch leaves stock and events unchanged
+PASS Repeated dispatch deducts once and leaves destination unavailable in transit
+PASS Source plus destination plus in-transit stock is conserved
+PASS Dispatched goods cannot be cancelled back into source stock
+PASS Rolled-back receipt also rolls back new destination row
+PASS Concurrent receipts provision destination and credit exactly once
+PASS A delayed duplicate dispatch cannot deduct received goods again
+PASS A purchase and a transfer competing for the last unit have one winner
+PASS Dispatch cannot consume reserved units and a failed attempt remains retryable
+PASS Cancellation is idempotent and prevents future dispatch
+PASS A lost shipment stays deducted and cannot later be received
+PASS Concurrent receipt and loss resolve to one terminal decision
+All 28 checks passed.
+
+Command python tests/verify_replication.py
+PASS Separate primary and physical standby are running
+PostgreSQL 17.11 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit
+PASS Caught-up inventory reads are served by the replica
+PASS The replica rejects inventory writes
+PASS Primary commits a reservation while paused replica still displays old stock
+PASS Post-commit read token falls back to primary during replay lag
+{"source": "primary", "reason": "replica_lag", "lag_bytes": 2256, "stock": {"warehouse_id": 1, "product_id": 17, "on_hand": 10, "reserved": 3, "available": 7, "version": 1}}
+PASS Ordinary browsing also detects lag without a caller token
+PASS Authoritative reads always use primary
+PASS Stale replica availability cannot authorize an overselling purchase
+PASS Bounded read wait uses replica once replay catches up
+PASS Missing inventory is reported consistently
+PASS Read tokens from another timeline are rejected
+PASS A writable server configured as replica is excluded
+PASS An unreachable replica falls back to primary
+PASS Transfer command runs through the primary client
+PASS Replica shows source deduction while goods are in transit
+PASS Verified receipt reaches replica exactly once after duplicate callback
+PASS Transfer ledger and both movement events replicate together
+PASS Write tokens are captured after durable commits in WAL order
+All 18 replication and routing checks passed.

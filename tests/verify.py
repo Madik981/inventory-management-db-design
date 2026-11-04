@@ -62,7 +62,7 @@ def race(statements):
 def main():
     execute(f'CREATE DATABASE "{DATABASE}";', database="postgres")
     try:
-        for name in ("01_schema.sql", "02_operations.sql"):
+        for name in ("01_schema.sql", "02_operations.sql", "06_transfers.sql"):
             execute((ROOT / "sql" / name).read_text(encoding="utf-8"))
         execute("INSERT INTO warehouses VALUES (1, 'Almaty', 'Almaty'), (2, 'Astana', 'Astana');")
 
@@ -132,9 +132,87 @@ def main():
         execute(f"SELECT finish_reservation('{order}', 'confirm'); SELECT finish_reservation('{order}', 'release');")
         check(state(7) == "0|0|0", "Cancellation after confirmation does not recreate sold stock")
 
+        verify_transfers()
         print(f"All {checks} checks passed.")
     finally:
         execute(f'DROP DATABASE "{DATABASE}";', database="postgres")
+
+
+def verify_transfers():
+    new_stock(8, 10)
+    transfer = str(uuid.uuid4())
+    request = f"SELECT request_transfer('{transfer}', 1, 2, 8, 4);"
+    results = race([request] * 8)
+    count = execute(f"SELECT count(*) FROM warehouse_transfers WHERE transfer_id='{transfer}';").stdout.strip()
+    check(all(r.returncode == 0 for r in results) and count == '1' and state(8) == '10|0|10',
+          'Concurrent transfer requests create one transfer without moving stock')
+    check(execute(f"SELECT request_transfer('{transfer}', 1, 2, 8, 5);", fail=False).returncode != 0,
+          'Changed transfer payload is rejected')
+    check(execute(f"SELECT advance_transfer('{transfer}', 'receive');", fail=False).returncode != 0,
+          'Receipt before dispatch is rejected')
+    dispatch = f"SELECT advance_transfer('{transfer}', 'dispatch');"
+    execute('BEGIN;' + dispatch + 'ROLLBACK;')
+    count = execute(f"SELECT count(*) FROM inventory_events WHERE operation_id='{transfer}';").stdout.strip()
+    check(state(8) == '10|0|10' and count == '0',
+          'Rolled-back dispatch leaves stock and events unchanged')
+    results = race([dispatch] * 8)
+    destination = execute('SELECT count(*) FROM inventory WHERE warehouse_id=2 AND product_id=8;').stdout.strip()
+    count = execute(f"SELECT count(*) FROM inventory_events WHERE operation_id='{transfer}';").stdout.strip()
+    check(all(r.returncode == 0 for r in results) and state(8) == '6|0|6' and destination == '0' and count == '1',
+          'Repeated dispatch deducts once and leaves destination unavailable in transit')
+    total = execute('''SELECT (SELECT sum(on_hand) FROM inventory WHERE product_id=8)
+        + (SELECT sum(quantity) FROM warehouse_transfers WHERE product_id=8 AND status='in_transit');''').stdout.strip()
+    check(total == '10', 'Source plus destination plus in-transit stock is conserved')
+    check(execute(f"SELECT advance_transfer('{transfer}', 'cancel');", fail=False).returncode != 0,
+          'Dispatched goods cannot be cancelled back into source stock')
+    receive = f"SELECT advance_transfer('{transfer}', 'receive');"
+    execute('BEGIN;' + receive + 'ROLLBACK;')
+    count = execute('SELECT count(*) FROM inventory WHERE warehouse_id=2 AND product_id=8;').stdout.strip()
+    check(count == '0', 'Rolled-back receipt also rolls back new destination row')
+    results = race([receive] * 8)
+    destination = execute('SELECT on_hand FROM inventory WHERE warehouse_id=2 AND product_id=8;').stdout.strip()
+    count = execute(f"SELECT count(*) FROM inventory_events WHERE operation_id='{transfer}';").stdout.strip()
+    check(all(r.returncode == 0 for r in results) and destination == '4' and count == '2' and state(8) == '6|0|6',
+          'Concurrent receipts provision destination and credit exactly once')
+    check(execute(dispatch).stdout.strip() == 'received' and state(8) == '6|0|6',
+          'A delayed duplicate dispatch cannot deduct received goods again')
+
+    new_stock(9)
+    transfer = str(uuid.uuid4())
+    order = str(uuid.uuid4())
+    execute(f"SELECT request_transfer('{transfer}', 1, 2, 9, 1);")
+    results = race([reserve(order, 9), f"SELECT advance_transfer('{transfer}', 'dispatch');"])
+    check(sum(r.returncode == 0 for r in results) == 1 and state(9) in ('1|1|0', '0|0|0'),
+          'A purchase and a transfer competing for the last unit have one winner')
+
+    new_stock(10, 5)
+    order = str(uuid.uuid4())
+    execute(reserve(order, 10, 4))
+    transfer = str(uuid.uuid4())
+    execute(f"SELECT request_transfer('{transfer}', 1, 2, 10, 2);")
+    result = execute(f"SELECT advance_transfer('{transfer}', 'dispatch');", fail=False)
+    status = execute(f"SELECT status FROM warehouse_transfers WHERE transfer_id='{transfer}';").stdout.strip()
+    check(result.returncode != 0 and state(10) == '5|4|1' and status == 'requested',
+          'Dispatch cannot consume reserved units and a failed attempt remains retryable')
+    execute(f"SELECT advance_transfer('{transfer}', 'cancel'); SELECT advance_transfer('{transfer}', 'cancel');")
+    check(state(10) == '5|4|1' and execute(f"SELECT advance_transfer('{transfer}', 'dispatch');", fail=False).returncode != 0,
+          'Cancellation is idempotent and prevents future dispatch')
+
+    new_stock(11, 5)
+    transfer = str(uuid.uuid4())
+    execute(f"SELECT request_transfer('{transfer}', 1, 2, 11, 2); SELECT advance_transfer('{transfer}', 'dispatch');")
+    execute(f"SELECT advance_transfer('{transfer}', 'lose'); SELECT advance_transfer('{transfer}', 'lose');")
+    destination = execute('SELECT count(*) FROM inventory WHERE warehouse_id=2 AND product_id=11;').stdout.strip()
+    check(state(11) == '3|0|3' and destination == '0'
+          and execute(f"SELECT advance_transfer('{transfer}', 'receive');", fail=False).returncode != 0,
+          'A lost shipment stays deducted and cannot later be received')
+
+    new_stock(12, 5)
+    transfer = str(uuid.uuid4())
+    execute(f"SELECT request_transfer('{transfer}', 1, 2, 12, 2); SELECT advance_transfer('{transfer}', 'dispatch');")
+    results = race([f"SELECT advance_transfer('{transfer}', '{action}');" for action in ('receive', 'lose')])
+    check(sum(r.returncode == 0 for r in results) == 1 and state(12) == '3|0|3',
+          'Concurrent receipt and loss resolve to one terminal decision')
 
 
 if __name__ == "__main__":

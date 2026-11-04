@@ -1,13 +1,14 @@
 import html
 import re
 import struct
+import sys
 from pathlib import Path
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.graphics.shapes import Drawing, Rect, String, Line, Polygon
-from reportlab.platypus import BaseDocTemplate, Frame, PageTemplate, Paragraph, Spacer, Table, TableStyle, Preformatted, KeepTogether
+from reportlab.graphics.shapes import Drawing, Rect, String, Line, Polygon, Group
+from reportlab.platypus import BaseDocTemplate, Frame, PageTemplate, Paragraph, Spacer, Table, TableStyle, Preformatted, KeepTogether, PageBreak
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
@@ -15,7 +16,9 @@ ROOT = Path(__file__).resolve().parents[1]
 INK = colors.HexColor('#17212D')
 PALE = colors.HexColor('#EDF2F6')
 GRID = colors.HexColor('#D9D9D9')
-WIDTH = A4[0] - 144
+COMPACT = '--compact' in sys.argv
+MARGIN = 52 if COMPACT else 72
+WIDTH = A4[0] - MARGIN * 2
 DIAGRAM_WIDTH = A4[0] - 104
 for font_name, filename in [('TNR', 'times.ttf'), ('TNR-Bold', 'timesbd.ttf'), ('TNR-Italic', 'timesi.ttf'), ('TNR-BoldItalic', 'timesbi.ttf')]:
     pdfmetrics.registerFont(TTFont(font_name, str(Path('C:/Windows/Fonts') / filename)))
@@ -37,6 +40,24 @@ styles.add(ParagraphStyle('ReportCode', fontName='Courier', fontSize=8.1, leadin
 styles.add(ParagraphStyle('FigureNumber', fontName='TNR-Bold', fontSize=12, leading=DOUBLE, alignment=TA_LEFT, spaceAfter=0, keepWithNext=True))
 styles.add(ParagraphStyle('FigureCaption', fontName='TNR-Italic', fontSize=12, leading=DOUBLE, alignment=TA_LEFT, spaceAfter=8, keepWithNext=True))
 styles.add(ParagraphStyle('ReportReference', fontName='Helvetica', fontSize=9, leading=12, spaceAfter=5, textColor=INK, allowWidows=0, allowOrphans=0))
+styles['ReportCell'].alignment = TA_LEFT
+if COMPACT:
+    for name in ('ReportBody', 'ReportCell', 'ReportHeader'):
+        styles[name].fontName = 'Helvetica-Bold' if name == 'ReportHeader' else 'Helvetica'
+        styles[name].fontSize = 10
+        styles[name].leading = 14 if name == 'ReportBody' else 12
+        styles[name].firstLineIndent = 0
+    styles['ReportBody'].spaceAfter = 7
+    for name in ('ReportTitle', 'ReportHeading'):
+        styles[name].fontName = 'Helvetica-Bold'
+        styles[name].fontSize = 23 if name == 'ReportTitle' else 13
+        styles[name].leading = 28 if name == 'ReportTitle' else 17
+        styles[name].firstLineIndent = 0
+    styles['ReportHeading'].spaceBefore = 10
+    for name in ('FigureNumber', 'FigureCaption'):
+        styles[name].fontName = 'Helvetica-Bold' if name == 'FigureNumber' else 'Helvetica-Oblique'
+        styles[name].fontSize = 9
+        styles[name].leading = 12
 
 
 def box(drawing, x, y, w, h, title, lines=()):
@@ -57,23 +78,26 @@ def arrow(drawing, x1, y1, x2, y2, label=None):
 
 
 def architecture():
-    d = Drawing(DIAGRAM_WIDTH, 255)
-    box(d, 150, 215, 190, 35, 'Customers and operators')
-    box(d, 150, 158, 190, 40, 'Inventory API and connection pool')
-    box(d, 160, 93, 170, 45, 'PostgreSQL primary', ['Stock, reservations, event outbox'])
-    box(d, 0, 94, 130, 44, 'Expiry worker', ['Short write transactions'])
-    box(d, 365, 157, 125, 42, 'Cache and read replicas', ['Advisory browsing'])
-    box(d, 0, 10, 145, 48, 'Synchronous standby', ['Durable failover candidate'])
-    box(d, 175, 10, 145, 48, 'Outbox publisher', ['At least once delivery'])
-    box(d, 350, 10, 140, 48, 'Broker and consumers', ['Cache and integrations'])
-    arrow(d, 245, 215, 245, 198)
-    arrow(d, 245, 158, 245, 138)
-    arrow(d, 130, 116, 160, 116)
-    arrow(d, 340, 179, 365, 179)
-    arrow(d, 330, 118, 426, 157)
-    arrow(d, 191, 93, 83, 58)
-    arrow(d, 245, 93, 245, 58)
-    arrow(d, 320, 34, 350, 34)
+    d = Drawing(DIAGRAM_WIDTH, 285)
+    box(d, 125, 245, 240, 35, 'Customers and warehouse operators')
+    box(d, 125, 180, 240, 42, 'InventoryClient or SQL sessions', ['Primary commands and WAL-aware reads'])
+    box(d, 10, 70, 210, 68, 'PostgreSQL primary :55434',
+        ['Stock, reservations, transfers', 'Atomic inventory event records', 'Dedicated replication role and slot'])
+    box(d, 270, 70, 210, 68, 'Asynchronous replica :55435',
+        ['Initial pg_basebackup', 'Streaming WAL replay', 'Read-only inventory queries'])
+    box(d, 0, 180, 105, 42, 'Expiry iteration', ['Releases due holds'])
+    arrow(d, 245, 245, 245, 222)
+    arrow(d, 180, 180, 150, 138)
+    arrow(d, 320, 180, 365, 138)
+    arrow(d, 52, 180, 52, 138)
+    arrow(d, 220, 104, 270, 104)
+    d.add(String(229, 114, 'WAL', fontName='Helvetica', fontSize=8, fillColor=INK))
+    d.add(String(156, 151, 'writes', fontName='Helvetica', fontSize=8, fillColor=INK))
+    d.add(String(350, 151, 'reads', fontName='Helvetica', fontSize=8, fillColor=INK))
+    d.add(String(10, 40, 'Read rule: reach the sampled WAL position within 250 ms, or use the primary.',
+                 fontName='Helvetica', fontSize=8.5, fillColor=INK))
+    d.add(String(10, 22, 'One primary owns all warehouse balances. One asynchronous standby serves reads.',
+                 fontName='Helvetica', fontSize=8.5, fillColor=INK))
     return d
 
 
@@ -93,6 +117,30 @@ def erd():
     arrow(d, 145, 46, 173, 46)
     d.add(String(147, 54, '1 : n', fontSize=7.5, fillColor=INK))
     arrow(d, 355, 150, 420, 90, '1 : many')
+    combined = Drawing(DIAGRAM_WIDTH, 410)
+    core = Group(*d.contents)
+    core.translate(0, 110)
+    combined.add(core)
+    box(combined, 0, 5, 210, 85, 'STOCK ADJUSTMENTS',
+        ['PK operation_id', 'FK warehouse_id, product_id', 'delta, reason, created_at'])
+    box(combined, 280, 5, 210, 85, 'WAREHOUSE TRANSFERS',
+        ['PK transfer_id, FK product_id', 'FK source and destination warehouse', 'quantity, status, dispatch / receipt times'])
+    return combined
+
+
+def transfer_lifecycle():
+    d = Drawing(DIAGRAM_WIDTH, 210)
+    box(d, 0, 130, 140, 70, 'REQUESTED', ['Fixed transfer contents', 'Stock unchanged'])
+    box(d, 175, 130, 140, 70, 'IN TRANSIT', ['Source minus quantity', 'Destination still pending'])
+    box(d, 350, 130, 140, 70, 'RECEIVED', ['Verified physical receipt', 'Destination plus quantity'])
+    box(d, 0, 10, 140, 65, 'CANCELLED', ['Before dispatch', 'No stock movement'])
+    box(d, 175, 10, 140, 65, 'LOST', ['After dispatch', 'Source stays deducted'])
+    arrow(d, 140, 162, 175, 162)
+    arrow(d, 315, 162, 350, 162)
+    d.add(String(143, 176, 'dispatch', fontName='Helvetica', fontSize=7.5, fillColor=INK))
+    d.add(String(318, 176, 'receive', fontName='Helvetica', fontSize=7.5, fillColor=INK))
+    arrow(d, 70, 130, 70, 75, 'cancel')
+    arrow(d, 245, 130, 245, 75, 'lose')
     return d
 
 
@@ -105,9 +153,11 @@ def markup(text):
 
 
 def footer(canvas, document):
-    canvas.setFont('TNR', 12)
+    canvas.setFont('Helvetica' if COMPACT else 'TNR', 8 if COMPACT else 12)
     canvas.setFillColor(colors.black)
-    canvas.drawRightString(A4[0]-72, A4[1]-36, str(document.page))
+    canvas.drawRightString(A4[0]-MARGIN, A4[1]-36, str(document.page))
+    if COMPACT:
+        canvas.drawString(MARGIN, A4[1]-36, 'Database Design | Problem 2 | Verified 4 November 2026')
 
 
 lines = (ROOT / 'REPORT.md').read_text(encoding='utf-8').splitlines()
@@ -124,6 +174,8 @@ while i < len(lines):
         story.append(Paragraph(markup(line[2:]), styles['ReportTitle']))
     elif line.startswith('## '):
         heading = line[3:]
+        if heading.startswith(('Appendix ', '12 Implementation')):
+            story.append(PageBreak())
         heading = re.sub(r'^(\d+) ', r'\1  ', heading)
         story.append(Paragraph(markup(heading), styles['ReportHeading']))
     elif line.startswith('```'):
@@ -135,16 +187,18 @@ while i < len(lines):
             i += 1
         if language == 'mermaid':
             figure += 1
-            graphic = architecture() if figure == 1 else erd()
+            graphic = {1: architecture, 2: erd, 3: transfer_lifecycle}[figure]()
             scale = WIDTH / graphic.width * (0.97 if figure == 2 else 1)
             graphic.scale(scale, scale)
             graphic.width *= scale
             graphic.height *= scale
             graphic.hAlign = 'LEFT'
-            caption = 'Inventory service architecture' if figure == 1 else 'Core inventory and reservation relationships'
+            caption = {1: 'Implemented primary and read-replica architecture',
+                       2: 'Schema relationships and supporting records',
+                       3: 'Warehouse transfer lifecycle'}[figure]
             story.append(KeepTogether([Paragraph(f'Figure {figure}', styles['FigureNumber']), Paragraph(caption, styles['FigureCaption']), graphic, Spacer(1, 8)]))
         else:
-            story.append(Preformatted('\n'.join(block), styles['ReportCode']))
+            story.append(KeepTogether([Preformatted('\n'.join(block), styles['ReportCode'])]))
     elif line.startswith('|'):
         rows = []
         while i < len(lines) and lines[i].startswith('|'):
@@ -157,6 +211,10 @@ while i < len(lines):
             widths = [WIDTH*.29, WIDTH*.71]
         elif rows[0][0] == 'Step':
             widths = [WIDTH*.1, WIDTH*.4, WIDTH*.5]
+        elif rows[0][0] == 'Suite':
+            widths = [WIDTH*.56, WIDTH*.24, WIDTH*.20]
+        elif rows[0][0] == 'Check':
+            widths = [WIDTH*.12, WIDTH*.73, WIDTH*.15]
         else:
             widths = [WIDTH*.24, WIDTH*.31, WIDTH*.45]
         content = [[Paragraph(markup(cell), styles['ReportHeader'] if ri == 0 else styles['ReportCell']) for cell in row] for ri, row in enumerate(rows)]
@@ -172,8 +230,17 @@ while i < len(lines):
             ('TOPPADDING', (0,0), (-1,-1), 3.5),
             ('BOTTOMPADDING', (0,0), (-1,-1), 3.5)
         ]))
+        if rows[0][0] == 'Check' and not COMPACT:
+            table.setStyle(TableStyle([
+                ('TOPPADDING', (0,0), (-1,-1), 1.5),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 1.5)
+            ]))
         table_number += 1
-        table_title = {1: 'Database tables and keys', 2: 'Failure scenarios and recovery behavior', 3: 'Competing transactions for the last item'}[table_number]
+        table_title = {'Table': 'Database tables and keys',
+                       'Failure': 'Failure scenarios and recovery behavior',
+                       'Step': 'Competing transactions for the last item',
+                       'Suite': 'Observed test-suite results',
+                       'Check': 'Individual verification results'}[rows[0][0]]
         story.extend([Paragraph(f'Table {table_number}', styles['FigureNumber']), Paragraph(table_title, styles['FigureCaption'])])
         story.extend([table, Spacer(1, 10)])
     else:
@@ -185,12 +252,21 @@ while i < len(lines):
         story.append(Paragraph(markup(' '.join(paragraph)), paragraph_style))
     i += 1
 
-document = BaseDocTemplate(
-    str(ROOT / 'Inventory_Management_Report_Styled.pdf'), pagesize=A4,
-    rightMargin=72, leftMargin=72, topMargin=72, bottomMargin=72,
+class ReportDocument(BaseDocTemplate):
+    def afterFlowable(self, flowable):
+        if isinstance(flowable, Paragraph) and flowable.style.name == 'ReportHeading':
+            heading = flowable.getPlainText()
+            self.canv.bookmarkPage(heading)
+            self.canv.addOutlineEntry(heading, heading, level=0)
+
+
+output = ROOT / ('Inventory_Management_Report.pdf' if COMPACT else 'Inventory_Management_Report_Styled.pdf')
+document = ReportDocument(
+    str(output), pagesize=A4,
+    rightMargin=MARGIN, leftMargin=MARGIN, topMargin=72 if not COMPACT else 58, bottomMargin=MARGIN,
     title='Inventory Management Database Design', author='',
-    subject='Problem 2 Database Design Assignment'
+    subject='Eight assignment answers, replication, transfers and 46 verified checks'
 )
-document.addPageTemplates(PageTemplate(id='Body', frames=Frame(72, 72, WIDTH, A4[1]-144, leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0), onPage=footer))
+document.addPageTemplates(PageTemplate(id='Body', frames=Frame(MARGIN, MARGIN, WIDTH, A4[1]-MARGIN-document.topMargin, leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0), onPage=footer))
 document.build(story)
-print(ROOT / 'Inventory_Management_Report_Styled.pdf')
+print(output)

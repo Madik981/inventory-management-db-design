@@ -11,6 +11,7 @@ WHERE NOT EXISTS (
 DROP SCHEMA IF EXISTS inventory_app CASCADE;
 \ir 01_schema.sql
 \ir 02_operations.sql
+\ir 06_transfers.sql
 
 SET search_path TO inventory_app, public;
 
