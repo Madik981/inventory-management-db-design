@@ -4,3 +4,4 @@ __pycache__/
 backups/
 .state/
 .build/final_review/
+.build
