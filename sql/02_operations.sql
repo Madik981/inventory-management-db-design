@@ -17,6 +17,10 @@ BEGIN
         RAISE EXCEPTION 'Items must be a nonempty JSON array';
     END IF;
 
+    IF jsonb_array_length(p_items) > 100 THEN
+        RAISE EXCEPTION 'A reservation may contain at most 100 warehouse-product pairs';
+    END IF;
+
     IF EXISTS (
         SELECT 1 FROM jsonb_to_recordset(p_items)
         AS x(warehouse_id integer, product_id bigint, quantity bigint)

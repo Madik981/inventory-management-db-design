@@ -1,0 +1,60 @@
+{
+  "timestamp_utc": "2026-11-05T15:50:04.738913+00:00",
+  "products": 2000000,
+  "warehouses": 100,
+  "inventory_rows": 2000000,
+  "assortment": "sparse: one warehouse per product",
+  "clients": 32,
+  "duration_seconds": 30,
+  "batch_size": 64,
+  "docker_resources": "CPUs=12 Memory=15635529728 OS=Docker Desktop\n",
+  "scope": "Database write path with event inserts; excludes HTTP, customer think time and concurrent outbox draining.",
+  "runs": [
+    {
+      "workload": "adjustment",
+      "transactions_per_second": 2548.5,
+      "inventory_updates_per_second": 2548.5,
+      "failed_transactions": 0,
+      "p95_transaction_ms": 17.184,
+      "p99_transaction_ms": 22.33,
+      "latency_samples": 7696,
+      "wal_bytes": 75520936
+    },
+    {
+      "workload": "batch",
+      "transactions_per_second": 198.96,
+      "inventory_updates_per_second": 12733.35,
+      "failed_transactions": 0,
+      "p95_transaction_ms": 270.031,
+      "p99_transaction_ms": 323.509,
+      "latency_samples": 620,
+      "wal_bytes": 360377816
+    },
+    {
+      "workload": "checkout",
+      "transactions_per_second": 1040.4,
+      "inventory_updates_per_second": 2080.8,
+      "failed_transactions": 0,
+      "p95_transaction_ms": 40.264,
+      "p99_transaction_ms": 58.415,
+      "latency_samples": 3101,
+      "wal_bytes": 81085400
+    },
+    {
+      "workload": "hot",
+      "transactions_per_second": 79.68,
+      "inventory_updates_per_second": 159.37,
+      "failed_transactions": 0,
+      "p95_transaction_ms": 1069.757,
+      "p99_transaction_ms": 1394.231,
+      "latency_samples": 258,
+      "wal_bytes": 5965000
+    }
+  ],
+  "postgres": "PostgreSQL 17.11 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit",
+  "sync_standbys": "FIRST 1 (inventory_replica)",
+  "initial_database_bytes": 532251151,
+  "invalid_stock_rows": 0,
+  "active_reservations": 0,
+  "final_database_bytes": 782735027
+}

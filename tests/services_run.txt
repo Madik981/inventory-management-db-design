@@ -1,0 +1,6 @@
+PASS The deployed expiry process automatically releases an expired reservation
+PASS The deployed relay automatically acknowledges committed reservation events
+PASS Inventory writes succeed independently of an unavailable projection service
+PASS An undelivered movement remains durable in the outbox during consumer outage
+PASS The deployed relay catches up after consumer recovery with correct movement totals
+All 5 deployed-service checks passed.

@@ -12,9 +12,13 @@ fi
 
 if [ ! -s "$PGDATA/PG_VERSION" ]; then
     rm -rf /var/lib/postgresql/data/basebackup
-    pg_basebackup --dbname="host=db port=5432 user=inventory_replicator application_name=inventory_replica" \
+    set --
+    if [ "${CREATE_REPLICATION_SLOT:-0}" = '1' ]; then
+        set -- --create-slot
+    fi
+    pg_basebackup --dbname="host=${PRIMARY_HOST:-db} port=5432 user=inventory_replicator application_name=${REPLICATION_SLOT:-inventory_replica}" \
         --pgdata=/var/lib/postgresql/data/basebackup --write-recovery-conf --wal-method=stream \
-        --slot=inventory_replica --checkpoint=fast --no-password
+        --slot="${REPLICATION_SLOT:-inventory_replica}" --checkpoint=fast --no-password "$@"
     mv /var/lib/postgresql/data/basebackup "$PGDATA"
 fi
 

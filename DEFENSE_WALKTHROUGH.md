@@ -4,14 +4,14 @@
 
 Docker Compose provides PostgreSQL and its psql client. The complete manual demonstration below needs only Docker Desktop and a terminal. Neither a host PostgreSQL server nor a host psql installation is required. A graphical SQL editor is optional.
 
-The executable demonstration covers the schema, warehouse partitions, transactions, conditional updates, idempotency, reservation expiry, stock adjustments, audit events, rollback, and two competing database sessions. Docker Compose also starts an asynchronous read replica. The README gives transfer commands and the Python replication suite demonstrates replay lag and primary fallback. Automated failover, physical sharding, broker delivery, and target-scale performance remain further deployment work.
+The executable demonstration covers the schema, warehouse partitions, transactions, conditional updates, idempotency, reservation expiry, stock adjustments, audit events, rollback, and two competing database sessions. Docker Compose also starts a synchronous standby, a separate projection database, and continuous expiry and outbox workers. The README gives transfer commands and the Python replication suite demonstrates replay lag and primary fallback. The recovery suites demonstrate backup restoration, primary crash recovery, standby outage, and a controlled fenced failover. The benchmark contains measured results for two million products and 100 warehouses. Physical sharding and unattended failover election are design extensions.
 
 ## Prepare a clean demonstration
 
 Run these commands from the assignment directory:
 
 ```powershell
-docker compose up -d --wait
+docker compose up -d --build --wait
 docker compose exec -T db psql -X -U postgres -d postgres -f /defense/sql/05_defense_setup.sql
 ```
 
@@ -90,4 +90,18 @@ To repeat, finish or close both sessions and rerun the preparation command. The 
 docker compose down
 ```
 
-The database uses temporary container storage. Stopping the container discards its data. On the next start, run the preparation command again. The report and SQL files remain on the host.
+Named volumes preserve database data when containers stop or are removed. The explicit defense setup resets only inventory_defense. Never use docker compose down -v during normal preparation: that removes the persistent volumes. The background workers process inventory_case2; the manually controlled inventory_defense demo is isolated from them.
+
+## Additional evidence for the defense
+
+Run ./ops/prepare.ps1 once, then ./ops/check.ps1 for the functional, replication, and operational suites. Use ./ops/check.ps1 -Recovery for the crash and failover drills outside the presentation. Recovery briefly interrupts this lab pair; the failover drill creates and removes its own separate cluster.
+
+Show tests/benchmark_results.json for the exact measured workload, hardware allocation, update rate, transaction latency, and scope. Do not describe batched updates as independent customer orders. Show tests/recovery_results.json and tests/failover_results.json for observed restoration times.
+
+```powershell
+docker compose exec -T db psql -U postgres -d inventory_case2 -f /ops/health.sql
+docker compose logs --tail 10 expiry-worker outbox-worker
+.venv/Scripts/python.exe inventory_client.py 1 17 --allow-stale
+```
+
+Fresh reads require the primary. The explicit advisory mode can remain available during primary failure, but never authorizes a purchase. Synchronous WAL receipt can coexist with delayed replay. A missing synchronous standby deliberately leaves COMMIT pending; statement timeout is not a complete request deadline. A timed-out or disconnected caller must retain the operation ID.

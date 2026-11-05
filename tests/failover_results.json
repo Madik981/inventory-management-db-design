@@ -1,0 +1,14 @@
+{
+  "timestamp_utc": "2026-11-05T15:43:43.287917+00:00",
+  "checks_passed": 5,
+  "recovery_seconds": 4.8,
+  "rpo_acknowledged_transactions": 0,
+  "scope": "Controlled single-primary failure; isolated Docker project; shared-host disaster excluded",
+  "checks": [
+    "Former primary container is removed before standby promotion",
+    "The fenced standby becomes the new primary",
+    "Promotion preserves the reservation acknowledged by the former primary",
+    "A fresh synchronous standby is rebuilt before checkout resumes",
+    "Checkout resumes through the promoted primary with synchronous durability"
+  ]
+}

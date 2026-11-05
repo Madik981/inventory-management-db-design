@@ -7,7 +7,7 @@ SET LOCAL statement_timeout = '5s';
 WITH candidate AS MATERIALIZED (
     SELECT order_id
     FROM reservations
-    WHERE status = 'active' AND expires_at <= clock_timestamp()
+    WHERE status = 'active' AND expires_at <= statement_timestamp()
     ORDER BY expires_at, order_id
     FOR UPDATE SKIP LOCKED
     LIMIT 1

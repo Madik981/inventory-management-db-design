@@ -1,18 +1,18 @@
 # Inventory Management Database Design
 
-Updated implementation and verification, 4 November 2026.
+Updated implementation and verification, 5 November 2026.
 
 ## Problem 2
 
 This design supports a retailer with 2 million products, 100 warehouses, and a target of 10,000 inventory updates per second. Each warehouse owns its stock independently. An order may reserve items from several warehouses. The central correctness requirement is that committed reservations and sales must never exceed the available stock.
 
-The runnable baseline is PostgreSQL 17 with one writable primary and an asynchronous read replica. A synchronous standby is an additional high-availability deployment option. Inventory is partitioned by warehouse ID. Short database transactions perform conditional stock updates, record reservations, and write durable events together. Checkout always uses the primary. Browsing uses WAL-aware replica routing, while a displayed quantity remains subject to a successful reservation.
+The runnable baseline is PostgreSQL 17 with one writable primary and one synchronous standby on persistent volumes. A startup gate waits until the standby is synchronous before starting the application workers. Inventory is partitioned by warehouse ID. Short database transactions perform conditional stock updates, record reservations, and write durable events together. Checkout always uses the primary. Browsing uses WAL-aware replica routing, while a displayed quantity remains subject to a successful reservation.
 
-The accompanying SQL implements the inventory schema, reservation lifecycle, idempotent stock adjustments, warehouse transfer transitions, and event records. Docker Compose deploys one writable PostgreSQL 17 primary and one asynchronous streaming read replica. The Python client implements WAL-based read routing and primary fallback. A synchronous HA standby, automatic failover, external event delivery, and future sharding remain deployment extensions to this runnable baseline.
+The accompanying SQL implements inventory, reservations, adjustments, transfers, a leased outbox, and restricted application access. Docker Compose deploys the primary, synchronous standby, independent projection database, expiry worker, and outbox relay. The client pools connections, retries transient failures with stable identifiers, supports batches of up to 100 adjustments, and offers fresh or explicitly advisory reads. Recovery tests exercise a crash, backup restoration, and fenced promotion with a rebuilt synchronous standby. Physical sharding and an unattended HA manager are deployment choices, not claims about this single-primary implementation.
 
 ## Architecture and consistency boundary
 
-Application callers and warehouse operators use InventoryClient or SQL sessions. All stock commands reach the shared primary through transactional functions. The Python client routes browsing reads to the standby after checking its WAL progress. The expiry SQL script releases due reservations in short transactions. Inventory changes and their outbox records commit together. A production API, connection pool, and external event publisher are deployment extensions.
+Application callers and warehouse operators use InventoryClient or SQL sessions. All stock commands reach the shared primary through transactional functions. Fresh reads check WAL progress; advisory browsing can query the standby without contacting the primary and explicitly reports that freshness is not guaranteed. The expiry worker continuously releases due holds. The outbox worker delivers committed events to a separate PostgreSQL projection service. Each service has persistent storage. The project focuses on database design; an HTTP storefront and payment provider are outside its boundary.
 
 The transaction boundary includes stock counters, reservation state, reservation lines, and event inserts. It excludes customer think time, payment calls, and broker communication. A transaction must commit before the API reports success. If the commit outcome is uncertain, the caller retries with the same operation ID and queries the stored result.
 
@@ -22,10 +22,12 @@ The reservation functions use a fixed 15-minute lifetime as a business assumptio
 flowchart TD
     A[Customers and warehouse operators] --> B[InventoryClient or SQL sessions]
     B -->|Writes and authoritative reads| C[PostgreSQL primary port 55434]
-    B -->|Reads after WAL check| D[Asynchronous replica port 55435]
-    C -->|Streaming replication| D
-    E[Expiry worker iteration] --> C
+    B -->|Reads after WAL check| D[Synchronous standby port 55435]
+    C -->|Synchronous WAL receipt| D
+    E[Continuous expiry worker] --> C
     C --> F[Inventory reservations transfers and events]
+    C --> G[Outbox relay with recoverable leases]
+    G --> H[Projection database with durable inbox]
 ```
 
 ## 1 Database schema
@@ -38,7 +40,7 @@ flowchart TD
 | reservations | order_id | One reservation attempt per order ID, canonical request, deadline, and status |
 | reservation_items | order_id, warehouse_id, product_id | Positive quantity allocated from each warehouse |
 | stock_adjustments | operation_id | Idempotent receiving and correction commands |
-| inventory_events | event_id | Stock deltas, row version, audit data, and outbox delivery marker |
+| inventory_events | event_id | Stock deltas, row version, audit data, publication marker, and delivery lease |
 | warehouse_transfers | transfer_id | Source, destination, quantity, and transfer lifecycle |
 
 Orders and customers belong to the commerce service. Here, order_id is an external identifier and the reservation idempotency key. The demonstration deliberately omits unrelated customer, address, and payment details.
@@ -95,27 +97,36 @@ This is the concurrency primitive, not a complete reservation API. The reserve_o
 
 READ COMMITTED is sufficient for this known-row invariant. PostgreSQL serializes conflicting updates with row locks and rechecks the UPDATE condition after a competing committed update [1]. All write paths must follow the same rules. A cache lock or an application-instance mutex cannot replace this database guarantee.
 
-For multi-item operations, rows are updated in ascending (warehouse_id, product_id) order. Completion first locks the reservation header and then its inventory rows in the same order. This reduces deadlock risk. Production callers should retry the whole transaction after a deadlock or serialization failure using bounded backoff and the original operation ID. The current Python client surfaces these errors to its caller. Insufficient stock is returned as a business failure.
+For multi-item operations, rows are updated in ascending (warehouse_id, product_id) order. Completion first locks the reservation header and then its inventory rows in the same order. This reduces deadlock risk. Production callers should retry the whole transaction after a deadlock or serialization failure using bounded backoff and the original operation ID. The Python client retries deadlocks, serialization failures, lock timeouts, statement cancellation, and connection failures up to three attempts with bounded exponential backoff and jitter. It reuses exactly the same operation identifiers and payload. Business errors such as insufficient stock are not retried. Exhaustion returns an error; a lost commit response still requires replay with the original identifier. Insufficient stock is returned as a business failure.
 
 Pessimistic locking fits the last-item conflict: competitors must serialize before stock can be promised. Optimistic locking is an alternative for low-contention edits: UPDATE ... WHERE version = expected_version must affect one row, otherwise the caller rereads and retries. Repeated conflicts make this wasteful for hot products. The version column is also useful for rejecting stale cache events.
 
 Atomicity comes from committing all related changes together. Consistency comes from guarded writes, constraints, and lifecycle rules. Isolation comes from row locks and READ COMMITTED semantics. Durability comes from WAL and the replication policy. SERIALIZABLE would be appropriate for additional complex cross-row rules that cannot be encoded with these locks; it introduces retries and is not required for the stated stock invariant.
 
+| Isolation level | Relevant behavior | Decision for this design |
+| --- | --- | --- |
+| READ UNCOMMITTED | PostgreSQL treats it as READ COMMITTED; dirty reads remain disallowed | No separate benefit |
+| READ COMMITTED | Each statement sees a fresh committed snapshot; conflicting updates wait and recheck their condition | Selected with known-row locks and constraints |
+| REPEATABLE READ | One transaction snapshot; a concurrent change to a target row can require retry | Useful for consistent reporting, unnecessary for the guarded stock command |
+| SERIALIZABLE | Detects serialization anomalies, including predicate-based conflicts, and can abort transactions | Choose for new complex cross-row rules; retry the entire transaction |
+
+Optimistic compare-and-swap uses UPDATE ... WHERE version = expected_version and treats zero affected rows as a conflict. It still takes a database write lock while updating; optimistic means conflicts are detected from a version rather than holding an early read lock. Incrementing version alone is not optimistic locking. This project deliberately chooses guarded updates and pessimistic lifecycle locks for contested stock; it does not claim to implement every locking alternative simultaneously.
+
 ## 5 Database replication for inventory reads
 
-Use asynchronous replicas for browsing, search, dashboards, and reports that tolerate freshness delays. Use the primary for reserving stock, confirming or releasing reservations, warehouse adjustments, and authoritative order status immediately after a write. Frequently read product descriptions can be cached for longer than quantities. The Compose replica starts from pg_basebackup with standby.signal and streams through a dedicated replication role and physical slot. It is available on localhost port 55435, alongside the primary on 55434.
+Use read replicas for browsing, search, dashboards, and reports. The deployed standby synchronously acknowledges WAL receipt; its replay can still lag. Additional asynchronous replicas are a possible reporting extension. Use the primary for reserving stock, confirming or releasing reservations, warehouse adjustments, and authoritative order status immediately after a write. Frequently read product descriptions can be cached for longer than quantities. The Compose replica starts from pg_basebackup with standby.signal and streams through a dedicated replication role and physical slot. It is available on localhost port 55435, alongside the primary on 55434.
 
 ## 6 Handling replication lag
 
-A replica might display one available item after the primary has reserved it. Checkout runs the conditional write on the primary and may return unavailable. The implemented inventory_client.py samples the primary's durable WAL position before a read, then checks pg_last_wal_replay_lsn() on the replica. It waits up to 250 ms by default, then falls back to the primary. Connection establishment and individual statements have separate two-second limits. Authoritative reads select the primary immediately. The replica probe and inventory SELECT are separate READ COMMITTED statements on the same connection, ensuring a new data snapshot after replay has reached the sampled position.
+A replica might display one available item after the primary has reserved it. Checkout runs the conditional write on the primary and may return unavailable. The implemented inventory_client.py samples the primary's durable WAL position before a read, then checks pg_last_wal_replay_lsn() on the replica. It waits up to 250 ms by default, then falls back to the primary. Connection establishment and individual statements have separate two-second limits; pool acquisition is bounded and lock acquisition has a one-second limit. These are not a total request deadline: synchronous COMMIT can remain pending while the required standby is unavailable. Do not cancel synchronous replication waits and report success; a disconnected caller must treat the result as unknown and replay the same identifier. Authoritative reads select the primary immediately. The replica probe and inventory SELECT are separate READ COMMITTED statements on the same connection, ensuring a new data snapshot after replay has reached the sampled position.
 
-Client write methods commit on the primary with synchronous_commit enabled and then return a token containing the cluster ID, timeline, and WAL position. Subsequent reads validate that token against the current primary. A different cluster or timeline, or a token ahead of the primary's durable WAL, is rejected. Replica identity mismatch or connection failure causes primary fallback. The client still performs a small metadata query on the primary per read and requires primary availability to establish freshness. These metadata calls use the administrative demo account; production role grants need to expose only the required monitoring functions and application commands.
+Client write methods commit on the primary with synchronous_commit enabled and then return a token containing the cluster ID, timeline, and WAL position. Subsequent reads validate that token against the current primary. A different cluster or timeline, or a token ahead of the primary's durable WAL, is rejected. Replica identity mismatch or connection failure causes primary fallback. Fresh reads still require primary metadata and primary availability. Explicit allow_stale browsing bypasses that dependency and cannot be combined with an authoritative or token-bound request. Thread-safe, bounded pools reuse sessions. The deployed workers use inventory_service, which has read access and hardened function execution but cannot directly alter balances. Monitoring-function grants are explicit; demonstration secrets must be replaced when deployed outside the local lab.
 
 The client reports the selected source, routing reason, and observed WAL gap in bytes. pg_stat_replication provides sender state and sent/replayed positions. Position comparison handles an idle primary without misclassifying an old replay timestamp as active lag. The lab bounds slot retention with max_slot_wal_keep_size = 1GB. A replica that falls beyond retained WAL requires a new base backup. Production monitoring should additionally track backlog, replica health, and cache age.
 
-For important acknowledged stock writes, the proposed HA extension configures synchronous_commit = on and a synchronous standby, which waits for durable WAL receipt. remote_apply additionally waits for replay and can support reads on the selected synchronous standby, at extra latency [3]. The runnable pair uses asynchronous replication, so an acknowledged primary commit can precede standby receipt. Its read routing and post-commit tokens handle this delay during normal operation. Safe failover needs the additional policy below.
+The deployed configuration sets synchronous_standby_names to FIRST 1 (inventory_replica) and uses synchronous_commit = on. An acknowledged application commit therefore has durable WAL on the selected standby. Synchronous receipt does not imply synchronous replay, which is why read routing still checks replay LSN. remote_apply is an alternative that also waits for replay, at additional latency [3]. The fresh read tests deliberately pause replay while writes continue to reach standby storage.
 
-Failover requires a manager that fences the former primary and promotes a standby proven to contain acknowledged commits. If no safe replica is available, stop authoritative checkout writes until safety is restored. Losing acknowledged reservations by promoting a stale asynchronous replica could sell the same stock again. Under a network partition, this design favors consistent stock ownership over uninterrupted writes; cached browsing may remain available. Backups and archived WAL support point-in-time recovery, and restoration must be rehearsed.
+The tested failover procedure removes the failed primary container before promotion, promotes the synchronous standby, immediately requires a replacement synchronous standby, rebuilds that standby from a base backup, and only then resumes checkout through the new endpoint. The recovery drill uses a separate temporary Docker project. An isolated old primary must never be restarted as writable; rebuilding or pg_rewind and role reassignment are required before rejoining it. This is controlled failover, not an unattended election system. Under a partition the design stops acknowledging writes rather than risking double ownership. Advisory browsing remains possible. Logical backups have checksums, restore into a new database, and reapply application permissions. Whole-host disaster recovery additionally requires off-host copies; WAL archiving for PITR is an extension, not a tested feature.
 
 ## 7 Inventory reservations and completion
 
@@ -131,13 +142,13 @@ SELECT inventory_app.reserve_order(
 COMMIT;
 ```
 
-The function validates positive quantities and rejects duplicate warehouse-product pairs. It sorts the request into a canonical representation. Reusing the same order ID and identical contents returns the stored state; reusing the ID with different contents raises an error. Concurrent duplicate inserts serialize through the primary key. An unsuccessful attempt is rolled back completely, so its ID has no persisted rejection and can be retried.
+The function validates positive quantities, caps a reservation at 100 warehouse-product pairs, and rejects duplicate pairs. It sorts the request into a canonical representation. Reusing the same order ID and identical contents returns the stored state; reusing the ID with different contents raises an error. Concurrent duplicate inserts serialize through the primary key. An unsuccessful attempt is rolled back completely, so its ID has no persisted rejection and can be retried.
 
 On reservation, reserved increases and on_hand remains unchanged. On confirmation, both decrease by the reserved quantity. On release or expiry, only reserved decreases. Every change produces a versioned inventory event in the same transaction. The adjust_stock function handles signed receiving or correction deltas, checks that remaining stock covers existing reservations, and deduplicates by operation ID.
 
 finish_reservation locks the header and all affected stock rows before deciding the transition. It reads the database clock after acquiring those locks. A confirmation at or after expires_at becomes expiry and releases the hold. A confirmation admitted before the deadline may commit shortly afterward; this admission decision is the defined cutoff. Application-server clocks do not determine expiry.
 
-The expiry worker uses the partial index to find due active reservations. sql/04_expiry_worker.sql locks one candidate with FOR UPDATE SKIP LOCKED, invokes the same completion function, and commits. Several workers can operate without waiting on the same candidate. They repeat until the queue is drained. If the worker is late, stock remains conservatively unavailable; it is never silently sold twice.
+The deployed expiry worker repeatedly calls expire_one in separate short transactions. Its candidate query uses expires_at <= statement_timestamp(), so the partial expiry index provides a bounded search. The final transition still checks clock_timestamp() after acquiring stock locks. FOR UPDATE SKIP LOCKED lets multiple workers claim different reservations. Each transaction handles one order to preserve short lock lifetimes and deterministic per-order locking; an empty queue sleeps for 250 ms. Database errors are retried after a delay and Docker restarts failed worker processes. The manual sql/04_expiry_worker.sql demonstrates the same transaction. If processing falls behind, stock remains conservatively reserved. ops/health.sql exposes the oldest overdue hold.
 
 No database transaction remains open while the customer pays. Authorize payment externally, confirm the live reservation, and then capture through a retryable payment workflow. An expired reservation must not be resurrected by a late payment callback. If money was already captured, use a refund or an explicit new allocation attempt. Fulfillment waits for both confirmed inventory and a satisfactory payment state. Duplicate callbacks call the idempotent transition; reconciliation queries the provider when callbacks are lost.
 
@@ -183,17 +194,17 @@ Recovery preserves committed stock decisions and retries incomplete work with st
 | Commit succeeds but response is lost | Retry the same ID and request; return stored state without applying another delta. |
 | Confirmation races with expiry | Both lock the same header; one terminal transition wins and the other observes it. |
 | Expiry worker stops | Holds remain reserved; a restarted worker drains due holds. Alert on oldest due reservation. |
-| Broker or publisher fails | Events remain committed in the database and are retried. Inventory writes do not depend on broker availability. |
-| Publish succeeds but acknowledgement is lost | Publication may repeat. Consumers deduplicate event IDs in the same transaction as their side effects. |
-| Events arrive out of order | Balance projections apply newer per-item versions; gap-sensitive consumers request a fresh snapshot or replay. |
-| Primary fails or becomes isolated | Fence it and promote only a sufficiently durable replica. Pause writes when safe promotion cannot be proved. |
+| Projection service or relay fails | Events remain in the outbox. Delivery leases expire and workers retry; stock commits do not depend on the projection service. |
+| Consumer commit succeeds but acknowledgement is lost | The leased event is delivered again; the durable inbox and movement update transaction prevent duplicate effects. |
+| Events arrive out of order | The movement projection applies every deduplicated delta. Absolute balance caches require snapshots or gap-aware replay, not simply ignoring older deltas. |
+| Primary fails or becomes isolated | Fence it, promote the synchronous standby, rebuild synchronous protection, and reroute checkout. A partition without a safe candidate leaves writes pending. |
 | Multiwarehouse operation partly fails | One-database transactions roll back; a sharded saga stays pending and runs durable compensation. |
 | Physical count is below reserved stock | Reject a blind negative adjustment; investigate and cancel or reallocate affected reservations through an audited workflow. |
-| Deadlock or lock timeout | Roll back and retry the whole bounded operation with its original ID. Never retry only the last SQL statement. |
+| Deadlock or lock timeout | The client retries the whole operation, up to three attempts, with the same IDs. It never retries only the final statement. |
 
-The event table doubles as a transactional outbox. Publishing is at least once: mark published only after broker acknowledgement. Delivery claims are short database operations with leases or a recoverable claim state; do not retain inventory locks during network calls. Event payload fields are immutable; published_at is delivery metadata. The SQL records events, but a production publisher and consumer inbox are separate components.
+The event table is a transactional outbox. claim_events reserves up to 100 records with a 30-second lease in a short transaction. The relay commits delivery to the separate projection database, then acknowledges the source claim. A crash between these commits causes redelivery after lease expiry. The inbox deduplicates by source, operation ID, warehouse, product, and event type in the same transaction as movement totals; changed duplicate payloads are rejected. Delta events are additive, so out-of-order delivery retains every delta rather than discarding lower versions. highest_version is diagnostic only. The projection records changes, not authoritative balances: opening stock and physical reconciliation are separate. No inventory lock is held during network delivery. The recovery tests inject the lost acknowledgement and verify exactly one consumer effect. This is direct durable service-to-service delivery; a message broker is optional.
 
-Periodically reconcile inventory.reserved against active reservation lines in one consistent database snapshot. Also reconcile stock movements, opening balances, transfers, and warehouse counts. A mismatch is an incident to investigate; overwriting a counter while live transactions continue can destroy valid reservations. Restrict direct table mutations to trusted service code and administrative repair workflows. The demonstration functions use invoker privileges; production role grants and a hardened function-only write interface require separate deployment work.
+Periodically reconcile inventory.reserved against active reservation lines in one consistent database snapshot. Also reconcile stock movements, opening balances, transfers, and warehouse counts. A mismatch is an incident to investigate; overwriting a counter while live transactions continue can destroy valid reservations. Restrict direct table mutations to trusted service code and administrative repair workflows. The transactional functions use SECURITY DEFINER with a fixed inventory_app, pg_temp search path. Public execution is revoked, and inventory_service receives explicit schema, read, function, and monitoring permissions. Direct stock mutations by this role are rejected and tested. Administrative repair remains a separate trusted operation.
 
 ## 10 Last item concurrency challenge
 
@@ -211,62 +222,52 @@ If A rolls back instead, B can acquire the row and reserve the item. If Bob acqu
 
 Later, confirmation reduces both on_hand and reserved from 1 to 0. A duplicate confirmation sees confirmed and makes no second deduction. The guarantee is scoped to the same warehouse-product row. If two different warehouses each own one unit, both sales are valid. A product-wide browse total does not represent a shared global balance.
 
-## 11 Capacity planning and limitations
+## 11 Capacity planning and measured limits
 
-The theoretical dense inventory has 2,000,000 x 100 = 200,000,000 rows. Store only actual warehouse assortments when the matrix is sparse. The composite key supports the hot access path; avoid indexing counters that change on every reservation. Hash partitioning helps organize maintenance but does not eliminate contention on one popular row.
+The dense upper bound is 2,000,000 x 100 = 200,000,000 inventory rows. The measured dataset contains 2,000,000 products, 100 warehouses and 2,000,000 inventory rows, with each product initially stocked at one warehouse. This explicitly sparse dataset exercises the full product catalog and warehouse count; it does not claim to benchmark the dense Cartesian product. Functional tests separately cover the same product stocked in multiple warehouses.
 
-At a sustained 10,000 row updates per second, one event per row update produces 864 million events per day. This is a major storage and WAL concern, not just an API throughput figure. Batch asynchronous export of immutable events to an analytical or archival store, retain only the required operational window, and monitor publisher backlog. At that scale, move events to time partitions with carefully designed uniqueness and durable idempotency records; do not discard replay protection merely because an event partition was archived.
+The measured platform is PostgreSQL 17.11 on Docker Desktop, with 12 allocated CPUs and approximately 14.6 GiB RAM for the Docker engine. Primary and synchronous standby use persistent volumes on one host. PostgreSQL uses 512 MB shared_buffers, a 4 GB max_wal_size, a 15-minute checkpoint timeout and WAL compression. Each workload ran for 30 seconds after a three-second warm-up, using 32 clients. Latency percentiles are from a 10 percent random transaction sample. This is a reproducible capacity experiment, not a long-duration production soak test.
 
-Benchmark realistic mixes of reservations, confirmations, deliveries, and reads, including hot products and large multiwarehouse carts. Measure throughput, p95/p99 latency, lock waits, WAL generation, synchronous-replica latency, CPU, disk latency, autovacuum progress, and event backlog. Set maximum cart size, short transaction timeouts, and pool limits. The target is 10,000 updates per second, not 10,000 open database connections.
+| Workload | Inventory updates / second | Transaction p95 / p99 |
+| --- | --- | --- |
+| adjustment | 2,548.50 | 17.184 / 22.33 ms |
+| batch | 12,733.35 | 270.031 / 323.509 ms |
+| checkout | 2,080.80 | 40.264 / 58.415 ms |
+| hot | 159.37 | 1069.757 / 1394.231 ms |
 
-One highly contended warehouse-product row remains serialized. Add admission control and queue hot-item requests; scale independent warehouse workloads by sharding only after measuring the bottleneck. Do not split a single stock balance into independent writable copies without a quota or ownership protocol. No claim of reaching 10,000 updates per second is made by this small correctness demonstration.
+Adjustment means one guarded, idempotent stock update and its event per committed transaction. Batch means 64 distinct row adjustments in one atomic transaction. Checkout reserves and confirms one unit in two committed statements, so it performs two inventory updates per reported pgbench transaction. Hot checkout sends all clients to the same warehouse-product row. Batch latency is the latency of the entire batch, not an individual operation SLA.
 
-## 12 Implementation and test results
+The 10,000-update target was exceeded in the batched write scenario with synchronous WAL acknowledgement. Individual adjustments, customer checkout and a single hot row have lower measured capacity. It would be incorrect to describe this result as 10,000 independent customer orders per second. The first experiment, preserved in tests/benchmark_before.json, used 16 clients and 32-row batches and measured 9,727.86 batched updates/s. Both configuration and workload changed in the second experiment; the improvement cannot be attributed solely to one tuning parameter.
 
-The package contains the schema, five transactional functions, the inventory client, seed data, an expiry-worker transaction, a two-instance Docker configuration, and reproducible tests. The PDFs are generated from this Markdown source. The ZIP includes both PDFs, source code, run instructions, and tests/verification_results.txt with the complete observed test output.
+All four final runs had zero failed transactions, zero invalid stock rows and zero unfinished active reservations. The initial database occupied 507.6 MiB and the final database 746.5 MiB. tests/benchmark_results.json records WAL generation and exact results; benchmarks/run.py reproduces the experiment and cleans up its database. The database write benchmark includes idempotency and event insertion. It excludes HTTP, payment, customer think time and simultaneous delivery of the benchmark's event backlog. Relay correctness and recovery are tested separately; end-to-end delivery capacity needs its own load test before deployment.
 
-Verification ran on 4 November 2026 using PostgreSQL 17.11 in Docker, with a writable primary and an asynchronous physical standby. Both suites passed. The lab containers use temporary storage and demonstration credentials. Each suite created and removed its own randomly named database. The replication suite briefly paused WAL replay and resumed it during cleanup.
+At 10,000 row updates/s, one event per update creates 864 million events/day. A finite retention and archival policy is therefore mandatory for a sustained deployment. Size storage using measured WAL and event sizes, export acknowledged immutable events in batches, partition event history by time, and retain durable operation deduplication records for the supported retry horizon. Do not erase idempotency protection when dropping an event partition. The lab keeps its small demonstration history; it is not a long-term archive.
+
+For a sustained unbatched target, the measured adjustment rate with a 30 percent capacity reserve gives a planning estimate of six comparable primary/standby shard pairs; the measured checkout rate gives seven. These are starting estimates, not measured linear scaling. Route by warehouse ID, validate skew and cross-shard coordination, and benchmark before accepting production traffic. A hot warehouse-product row remains serialized even after warehouse sharding. Admission control and a bounded hot-item queue are required; independent copies of the same balance would violate stock ownership.
+
+## 12 Implementation and verified recovery
+
+Verification was performed on 5 November 2026. The package contains the original transaction and replication suites plus new operational, deployed-service, crash/backup and fenced-failover checks. The Python dependency is pinned. All test databases are isolated and removed. The failover drill creates its own random Docker project, fences its old primary by removing the container, and deletes only that temporary project's volumes afterward.
 
 | Suite | Checks passed | Outcome |
 | --- | --- | --- |
-| tests/verify.py | 28 of 28 | PASS |
-| tests/verify_replication.py | 18 of 18 | PASS |
-| Total | 46 of 46 | PASS |
+| Functional | 28 of 28 | PASS |
+| Replication | 18 of 18 | PASS |
+| Operational | 16 of 16 | PASS |
+| Deployed services | 5 of 5 | PASS |
+| Recovery | 9 of 9 | PASS |
+| Failover | 5 of 5 | PASS |
+| Total | 81 of 81 | PASS |
 
-The functional suite includes the original 13 reservation checks and 15 transfer checks. The replication suite covers real standby replay lag, primary fallback, bounded waiting, read-token validation, unreachable-replica handling, and replication of transfer states and events. Appendices A and B list every observed check.
+The live worker checks confirm automatic expiry, independent inventory writes during projection outage, durable pending events and catch-up after consumer recovery. Operational tests cover restricted privileges, connection reuse, transaction retry, atomic batches, leased delivery, lost acknowledgement and out-of-order deltas. The original last-item and transfer races remain passing.
 
-During the lag test, a reservation reduced primary availability from 10 to 7 while the paused replica still displayed 10. The routed read returned the primary's value with the result below. The 2256-byte WAL gap is specific to this execution.
+In the measured recovery run, logical restore into a fresh database took 1.852 seconds. A forced primary SIGKILL and recovery, including the advisory-read check during downtime, took 5.639 seconds. The separate fenced promotion and rebuilding of synchronous protection took 4.8 seconds. These observed local results are evidence for the lab, not contractual production RTOs.
 
-```json
-{
-  "source": "primary", "reason": "replica_lag",
-  "lag_bytes": 2256,
-  "stock": {"warehouse_id": 1, "product_id": 17,
-            "on_hand": 10, "reserved": 3,
-            "available": 7, "version": 1}
-}
-```
+The recovery objective for an isolated primary failure is zero lost acknowledged transactions, provided the selected synchronous standby and its storage survive and the old primary is fenced. Checkout remains pending while the required synchronous protection is unavailable. For loss of the entire Docker host, the recovery point is the latest available off-host backup; local named volumes alone cannot cover that fault. The operational target is to rehearse the procedure within 60 seconds on this small lab dataset, and to measure restoration on production-sized data before assigning a production RTO.
 
-After replay resumed, a waiting read returned the updated stock from the replica. A purchase requesting 8 units failed on the primary despite the stale display of 10. This connects the read-routing test with the overselling invariant.
+The backup tool writes a custom-format pg_dump with a SHA-256 manifest, restores only into a new database, and reapplies restricted role permissions. Restored stock, reservations, events and permissions are checked. Commit-response loss is injected after a durable commit; replaying the same operation ID changes stock exactly once. Standby outage is tested as a pending commit, not falsely treated as an automatic rollback. Database SQL timeouts are not assumed to bound the synchronous commit wait.
 
-The initial iPhone demonstration ends with Almaty 108, Astana 49, and Shymkent 25. Transfer tests use separate fixtures.
-
-The commands below reproduce both suites from the extracted archive. Python 3 and the PostgreSQL psql client are required. Set the PSQL environment variable to its full executable path if it is absent from PATH.
-
-```powershell
-docker compose up -d --wait
-python -m pip install -r requirements.txt
-python tests/verify.py
-python tests/verify_replication.py
-python inventory_client.py 1 17
-```
-
-The observed summary is recorded verbatim in the included test log.
-
-```text
-All 28 checks passed.
-All 18 replication and routing checks passed.
-```
+Run ./ops/check.ps1 for regular verification, ./ops/check.ps1 -Recovery for the disruptive lab drills, and ./ops/check.ps1 -Benchmark for capacity measurement. Run these groups sequentially. The complete observed output is in tests/verification_results.txt. The PDF reports and submission ZIP are generated from these sources.
 
 ## Appendix A Functional verification
 
@@ -323,6 +324,46 @@ All 18 replication and routing checks passed.
 | R16 | Verified receipt reaches replica exactly once after duplicate callback | PASS |
 | R17 | Transfer ledger and both movement events replicate together | PASS |
 | R18 | Write tokens are captured after durable commits in WAL order | PASS |
+
+## Appendix C Operational and recovery verification
+
+| Check | Verified behavior | Result |
+| --- | --- | --- |
+| E01 | Application role cannot mutate stock tables directly | PASS |
+| E02 | Connection pool reuses a database session | PASS |
+| E03 | Restricted application role can reserve and receive a WAL token | PASS |
+| E04 | Advisory reads cannot masquerade as token-bound fresh reads | PASS |
+| E05 | Concurrent expiry workers process every due reservation exactly once | PASS |
+| E06 | Expiry releases all held quantities without negative counters | PASS |
+| E07 | An idle expiry worker returns without changing stock | PASS |
+| E08 | A lock timeout retries the whole operation successfully | PASS |
+| E09 | Retry after lock timeout applies the stock delta once | PASS |
+| E10 | Consumer commit survives a lost publisher acknowledgement | PASS |
+| E11 | Expired delivery leases replay events without duplicate consumer effects | PASS |
+| E12 | Durable inbox and movement totals commit atomically | PASS |
+| E13 | The batched client preserves operation-level idempotency | PASS |
+| E14 | A failing stock batch rolls back all preceding adjustments | PASS |
+| E15 | Out-of-order delta events retain every movement instead of dropping older versions | PASS |
+| E16 | A duplicate event identity with changed data is rejected | PASS |
+| E17 | The deployed expiry process automatically releases an expired reservation | PASS |
+| E18 | The deployed relay automatically acknowledges committed reservation events | PASS |
+| E19 | Inventory writes succeed independently of an unavailable projection service | PASS |
+| E20 | An undelivered movement remains durable in the outbox during consumer outage | PASS |
+| E21 | The deployed relay catches up after consumer recovery with correct movement totals | PASS |
+| E22 | Verified backup restores inventory and active reservations into a new database | PASS |
+| E23 | Backup restoration preserves the committed event ledger | PASS |
+| E24 | Restoration reapplies the restricted application permissions | PASS |
+| E25 | Explicit advisory browsing remains available while the primary is down | PASS |
+| E26 | A SIGKILL and restart retain the acknowledged stock and reservation | PASS |
+| E27 | No successful write acknowledgement is returned without the synchronous standby | PASS |
+| E28 | Retry after a delayed acknowledgement applies the original operation exactly once | PASS |
+| E29 | Connection loss after commit is recovered with the same idempotency key | PASS |
+| E30 | Recovery leaves a single idempotency record for the delayed operation | PASS |
+| E31 | Former primary container is removed before standby promotion | PASS |
+| E32 | The fenced standby becomes the new primary | PASS |
+| E33 | Promotion preserves the reservation acknowledged by the former primary | PASS |
+| E34 | A fresh synchronous standby is rebuilt before checkout resumes | PASS |
+| E35 | Checkout resumes through the promoted primary with synchronous durability | PASS |
 
 ## References
 

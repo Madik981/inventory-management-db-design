@@ -1,0 +1,10 @@
+PASS Verified backup restores inventory and active reservations into a new database
+PASS Backup restoration preserves the committed event ledger
+PASS Restoration reapplies the restricted application permissions
+PASS Explicit advisory browsing remains available while the primary is down
+PASS A SIGKILL and restart retain the acknowledged stock and reservation
+PASS No successful write acknowledgement is returned without the synchronous standby
+PASS Retry after a delayed acknowledgement applies the original operation exactly once
+PASS Connection loss after commit is recovered with the same idempotency key
+PASS Recovery leaves a single idempotency record for the delayed operation
+All 9 recovery checks passed.

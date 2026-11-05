@@ -1,8 +1,8 @@
 Inventory Management verification
-Verification date 2026-11-04 (Asia/Qyzylorda)
-Topology PostgreSQL 17 primary with an asynchronous physical standby
+Verification date 2026-11-05 (Asia/Qyzylorda)
+Persistent primary, synchronous standby, durable projection and workers
 
-Command python tests/verify.py
+Functional
 PASS 20 simultaneous buyers produce one reservation for one item
 PASS All losing buyers receive an explicit insufficient stock error
 PASS Concurrent duplicate confirmations consume stock once
@@ -33,14 +33,14 @@ PASS A lost shipment stays deducted and cannot later be received
 PASS Concurrent receipt and loss resolve to one terminal decision
 All 28 checks passed.
 
-Command python tests/verify_replication.py
+Replication
 PASS Separate primary and physical standby are running
 PostgreSQL 17.11 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit
 PASS Caught-up inventory reads are served by the replica
 PASS The replica rejects inventory writes
 PASS Primary commits a reservation while paused replica still displays old stock
 PASS Post-commit read token falls back to primary during replay lag
-{"source": "primary", "reason": "replica_lag", "lag_bytes": 2256, "stock": {"warehouse_id": 1, "product_id": 17, "on_hand": 10, "reserved": 3, "available": 7, "version": 1}}
+{"source": "primary", "reason": "replica_lag", "lag_bytes": 2288, "stock": {"warehouse_id": 1, "product_id": 17, "on_hand": 10, "reserved": 3, "available": 7, "version": 1}}
 PASS Ordinary browsing also detects lag without a caller token
 PASS Authoritative reads always use primary
 PASS Stale replica availability cannot authorize an overselling purchase
@@ -55,3 +55,52 @@ PASS Verified receipt reaches replica exactly once after duplicate callback
 PASS Transfer ledger and both movement events replicate together
 PASS Write tokens are captured after durable commits in WAL order
 All 18 replication and routing checks passed.
+
+Operational
+PASS Application role cannot mutate stock tables directly
+PASS Connection pool reuses a database session
+PASS Restricted application role can reserve and receive a WAL token
+PASS Advisory reads cannot masquerade as token-bound fresh reads
+PASS Concurrent expiry workers process every due reservation exactly once
+PASS Expiry releases all held quantities without negative counters
+PASS An idle expiry worker returns without changing stock
+PASS A lock timeout retries the whole operation successfully
+PASS Retry after lock timeout applies the stock delta once
+PASS Consumer commit survives a lost publisher acknowledgement
+PASS Expired delivery leases replay events without duplicate consumer effects
+PASS Durable inbox and movement totals commit atomically
+PASS The batched client preserves operation-level idempotency
+PASS A failing stock batch rolls back all preceding adjustments
+PASS Out-of-order delta events retain every movement instead of dropping older versions
+PASS A duplicate event identity with changed data is rejected
+All 16 operational checks passed.
+
+Deployed services
+PASS The deployed expiry process automatically releases an expired reservation
+PASS The deployed relay automatically acknowledges committed reservation events
+PASS Inventory writes succeed independently of an unavailable projection service
+PASS An undelivered movement remains durable in the outbox during consumer outage
+PASS The deployed relay catches up after consumer recovery with correct movement totals
+All 5 deployed-service checks passed.
+
+Recovery
+PASS Verified backup restores inventory and active reservations into a new database
+PASS Backup restoration preserves the committed event ledger
+PASS Restoration reapplies the restricted application permissions
+PASS Explicit advisory browsing remains available while the primary is down
+PASS A SIGKILL and restart retain the acknowledged stock and reservation
+PASS No successful write acknowledgement is returned without the synchronous standby
+PASS Retry after a delayed acknowledgement applies the original operation exactly once
+PASS Connection loss after commit is recovered with the same idempotency key
+PASS Recovery leaves a single idempotency record for the delayed operation
+All 9 recovery checks passed.
+
+Failover
+PASS Former primary container is removed before standby promotion
+PASS The fenced standby becomes the new primary
+PASS Promotion preserves the reservation acknowledged by the former primary
+PASS A fresh synchronous standby is rebuilt before checkout resumes
+PASS Checkout resumes through the promoted primary with synchronous durability
+All 5 failover checks passed. Recovery: 4.8s.
+
+All 81 checks passed.

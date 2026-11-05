@@ -1,2 +1,6 @@
 __pycache__/
 *.pyc
+.venv/
+backups/
+.state/
+.build/final_review/

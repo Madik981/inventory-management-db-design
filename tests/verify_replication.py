@@ -60,6 +60,11 @@ def main():
             raise RuntimeError('Resume existing replica replay before running this suite')
         query(primary_admin, sql.SQL('CREATE DATABASE {}').format(sql.Identifier(database)))
         paused = False
+        clients = []
+        def new_client(*args, **kwargs):
+            item = InventoryClient(*args, **kwargs)
+            clients.append(item)
+            return item
         try:
             primary_settings['dbname'] = database
             replica_settings['dbname'] = database
@@ -75,7 +80,7 @@ def main():
                 target = query(primary, 'SELECT pg_current_wal_flush_lsn()::text')[0]
                 wait_until(lambda: query(replica_admin, 'SELECT pg_last_wal_replay_lsn() >= %s::pg_lsn', (target,))[0])
 
-                client = InventoryClient(primary_settings, replica_settings, replica_wait_seconds=0.2)
+                client = new_client(primary_settings, replica_settings, replica_wait_seconds=0.2)
                 read = client.read_inventory(1, 17)
                 check(read['source'] == 'replica' and read['stock']['available'] == 10,
                       'Caught-up inventory reads are served by the replica')
@@ -117,7 +122,7 @@ def main():
                 timer = threading.Timer(0.15, query, (replica_admin, 'SELECT pg_wal_replay_resume()'))
                 timer.start()
                 try:
-                    waiting_client = InventoryClient(primary_settings, replica_settings, replica_wait_seconds=3)
+                    waiting_client = new_client(primary_settings, replica_settings, replica_wait_seconds=3)
                     read = waiting_client.read_inventory(1, 17, after=held['token'])
                 finally:
                     timer.join(timeout=6)
@@ -135,14 +140,14 @@ def main():
                 else:
                     raise AssertionError('Invalid timeline was accepted')
 
-                wrong_replica = InventoryClient(primary_settings, primary_settings)
+                wrong_replica = new_client(primary_settings, primary_settings)
                 read = wrong_replica.read_inventory(1, 17)
                 check(read['source'] == 'primary' and read['reason'] == 'replica_identity_mismatch',
                       'A writable server configured as replica is excluded')
                 with socket.socket() as unavailable:
                     unavailable.bind(('127.0.0.1', 0))
                     offline_settings = dict(replica_settings, host='127.0.0.1', port=unavailable.getsockname()[1])
-                    offline = InventoryClient(primary_settings, offline_settings)
+                    offline = new_client(primary_settings, offline_settings)
                     read = offline.read_inventory(1, 17)
                 check(read['source'] == 'primary' and read['reason'] == 'replica_unavailable'
                       and read['stock']['available'] == 7,
@@ -173,6 +178,8 @@ def main():
                       'Write tokens are captured after durable commits in WAL order')
                 print(f'All {checks} replication and routing checks passed.', flush=True)
         finally:
+            for client in clients:
+                client.close()
             if paused:
                 query(replica_admin, 'SELECT pg_wal_replay_resume()')
             query(primary_admin, sql.SQL('DROP DATABASE {}').format(sql.Identifier(database)))

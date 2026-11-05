@@ -1,0 +1,13 @@
+pgbench (17.11)
+transaction type: /benchmarks/adjustment.sql
+scaling factor: 1
+query mode: simple
+number of clients: 32
+number of threads: 8
+maximum number of tries: 1
+duration: 30 s
+number of transactions actually processed: 76533
+number of failed transactions: 0 (0.000%)
+latency average = 12.556 ms
+initial connection time = 22.599 ms
+tps = 2548.497814 (without initial connection time)

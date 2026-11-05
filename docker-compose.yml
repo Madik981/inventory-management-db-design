@@ -11,16 +11,25 @@ services:
       - max_replication_slots=5
       - -c
       - max_slot_wal_keep_size=1GB
+      - -c
+      - shared_buffers=512MB
+      - -c
+      - max_wal_size=4GB
+      - -c
+      - checkpoint_timeout=15min
+      - -c
+      - wal_compression=on
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: inventory_demo
       POSTGRES_DB: inventory_case2
       REPLICATION_PASSWORD: inventory_replication_demo
     ports:
-      - "127.0.0.1:55434:5432"
-    tmpfs:
-      - /var/lib/postgresql/data
+      - "127.0.0.1:${PRIMARY_PORT:-55434}:5432"
     volumes:
+      - primary_data:/var/lib/postgresql/data
+      - ./benchmarks:/benchmarks:ro
+      - ./ops:/ops:ro
       - ./defense.sql:/defense/defense.sql:ro
       - ./sql:/defense/sql:ro
       - ./docker/00_replication.sh:/docker-entrypoint-initdb.d/00_replication.sh:ro
@@ -28,6 +37,8 @@ services:
       - ./sql/02_operations.sql:/docker-entrypoint-initdb.d/02_operations.sql:ro
       - ./sql/03_demo.sql:/docker-entrypoint-initdb.d/03_demo.sql:ro
       - ./sql/06_transfers.sql:/docker-entrypoint-initdb.d/06_transfers.sql:ro
+      - ./sql/07_workers.sql:/docker-entrypoint-initdb.d/07_workers.sql:ro
+      - ./sql/08_access.sql:/docker-entrypoint-initdb.d/08_access.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d inventory_case2"]
       interval: 2s
@@ -40,10 +51,9 @@ services:
       PGDATA: /var/lib/postgresql/data/standby
       PGPASSWORD: inventory_replication_demo
     ports:
-      - "127.0.0.1:55435:5432"
-    tmpfs:
-      - /var/lib/postgresql/data
+      - "127.0.0.1:${REPLICA_PORT:-55435}:5432"
     volumes:
+      - replica_data:/var/lib/postgresql/data
       - ./docker/replica-entrypoint.sh:/replica-entrypoint.sh:ro
     depends_on:
       db:
@@ -53,3 +63,91 @@ services:
       interval: 2s
       timeout: 2s
       retries: 30
+  sync-ready:
+    image: postgres:17-alpine
+    entrypoint: ["sh", "/enable-sync.sh"]
+    environment:
+      PGHOST: db
+      PGUSER: postgres
+      PGPASSWORD: inventory_demo
+      PGDATABASE: inventory_case2
+    volumes:
+      - ./docker/enable-sync.sh:/enable-sync.sh:ro
+    depends_on:
+      replica:
+        condition: service_healthy
+  projection:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: projection_owner
+      POSTGRES_PASSWORD: projection_demo
+      POSTGRES_DB: inventory_projection
+    ports:
+      - "127.0.0.1:${PROJECTION_PORT:-55436}:5432"
+    volumes:
+      - projection_data:/var/lib/postgresql/data
+      - ./sql/projection.sql:/docker-entrypoint-initdb.d/projection.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U projection_owner -d inventory_projection"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+  expiry-worker:
+    build:
+      context: .
+      dockerfile: docker/worker.Dockerfile
+    command: ["expiry"]
+    environment: &worker_environment
+      PGHOST: db
+      PGPORT: "5432"
+      PGDATABASE: inventory_case2
+      PGUSER: inventory_service
+      PGPASSWORD: inventory_service_demo
+      REPLICA_PGHOST: replica
+      REPLICA_PGPORT: "5432"
+      SINK_PGHOST: projection
+      SINK_PGPORT: "5432"
+      SINK_PGUSER: projection_owner
+      SINK_PGPASSWORD: projection_demo
+      SINK_PGDATABASE: inventory_projection
+    restart: unless-stopped
+    depends_on:
+      sync-ready:
+        condition: service_completed_successfully
+  outbox-worker:
+    build:
+      context: .
+      dockerfile: docker/worker.Dockerfile
+    command: ["outbox"]
+    environment: *worker_environment
+    restart: unless-stopped
+    depends_on:
+      sync-ready:
+        condition: service_completed_successfully
+      projection:
+        condition: service_healthy
+
+  replacement:
+    image: postgres:17-alpine
+    profiles: ["recovery"]
+    entrypoint: ["sh", "/replica-entrypoint.sh"]
+    environment:
+      PGDATA: /var/lib/postgresql/data/standby
+      PGPASSWORD: inventory_replication_demo
+      PRIMARY_HOST: replica
+      REPLICATION_SLOT: inventory_replacement
+      CREATE_REPLICATION_SLOT: "1"
+    volumes:
+      - replacement_data:/var/lib/postgresql/data
+      - ./docker/replica-entrypoint.sh:/replica-entrypoint.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "psql -U postgres -d inventory_case2 -Atc 'SELECT pg_is_in_recovery()' | grep -qx t"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+volumes:
+  primary_data:
+  replica_data:
+  projection_data:
+  replacement_data:

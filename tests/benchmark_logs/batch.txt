@@ -1,0 +1,13 @@
+pgbench (17.11)
+transaction type: /benchmarks/batch.sql
+scaling factor: 1
+query mode: simple
+number of clients: 32
+number of threads: 8
+maximum number of tries: 1
+duration: 30 s
+number of transactions actually processed: 5983
+number of failed transactions: 0 (0.000%)
+latency average = 160.837 ms
+initial connection time = 26.882 ms
+tps = 198.958625 (without initial connection time)

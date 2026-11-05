@@ -27,7 +27,7 @@ The invariant is attached to known rows, and conditional writes serialize on the
 
 No. These partitions are tables under one PostgreSQL primary. Sharding means distributing data across separate writable database instances.
 
-**Can asynchronous replicas decide whether an order succeeds?**
+**Can read replicas decide whether an order succeeds?**
 
 No. A replica may show stale quantities. The primary alone accepts the reservation; replicas serve advisory reads.
 
@@ -57,7 +57,7 @@ No. Stock left the source physically. Record the loss; only verified returned go
 
 **Do the tests prove 10,000 updates per second?**
 
-No. They prove specific functional and concurrency behaviors under a small workload. Throughput needs sustained testing with realistic skew, storage, replica latency, and event retention.
+The functional tests prove specific scenarios. A separate measured benchmark uses two million products and 100 warehouses: 64-row batches exceeded 10,000 updates/s with synchronous WAL acknowledgement. Single adjustments, checkout and a hot row have lower measured capacity. This is not a claim of 10,000 individual orders/s or an end-to-end soak test.
 
 **What is the main bottleneck for a flash sale?**
 
@@ -65,4 +65,21 @@ One warehouse-product row is deliberately serialized. Queueing and admission con
 
 **What exactly is implemented?**
 
-The schema, reservation and completion functions, idempotent adjustments, audit/outbox records, expiry query, demo, and tests. Docker deploys a primary and an asynchronous streaming replica. The Python client checks WAL replay, waits within a budget, falls back to the primary, and validates post-commit read tokens. Transfer functions implement idempotent dispatch, verified receipt, cancellation, and loss. Automatic failover, external broker consumers, and sharded sagas remain design specifications.
+The schema, reservation and transfer lifecycles, idempotent adjustments and batches, continuous expiry, leased outbox delivery, durable consumer inbox, restricted application permissions, connection pooling and retries are implemented. Docker deploys a persistent primary, synchronous standby and separate projection database. Fresh reads validate replay; explicit advisory reads can bypass primary availability. Backup restoration, primary crash recovery and fenced failover with replacement standby are tested. Physical sharding and unattended leader election remain explicit deployment decisions.
+
+
+**What does synchronous standby failure look like?**
+
+COMMIT remains pending until the required standby acknowledges WAL. Statement timeout is not a complete commit deadline. A lost result is unknown; use the original idempotency key. This tradeoff favors stock consistency over uninterrupted writes.
+
+**What exactly does the consumer display?**
+
+Cumulative changes from delivered events, not authoritative stock including opening balances. It applies every deduplicated delta, including out-of-order events. Purchase decisions never use this projection.
+
+**What are the failure-domain limits?**
+
+The lab demonstrates a single-primary failure protocol on one Docker host. Whole-host failure requires independent nodes and off-host backups. Observed recovery times are in the result files and are not production SLAs.
+
+**How should the group prepare?**
+
+Both participants must independently explain the invariant, the waiting UPDATE, the difference between synchronous receipt and replay, and the exact benchmark scope. The assignment permits one or two students; technical artifacts cannot substitute for participation.

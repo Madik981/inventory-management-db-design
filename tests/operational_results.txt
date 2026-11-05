@@ -1,0 +1,17 @@
+PASS Application role cannot mutate stock tables directly
+PASS Connection pool reuses a database session
+PASS Restricted application role can reserve and receive a WAL token
+PASS Advisory reads cannot masquerade as token-bound fresh reads
+PASS Concurrent expiry workers process every due reservation exactly once
+PASS Expiry releases all held quantities without negative counters
+PASS An idle expiry worker returns without changing stock
+PASS A lock timeout retries the whole operation successfully
+PASS Retry after lock timeout applies the stock delta once
+PASS Consumer commit survives a lost publisher acknowledgement
+PASS Expired delivery leases replay events without duplicate consumer effects
+PASS Durable inbox and movement totals commit atomically
+PASS The batched client preserves operation-level idempotency
+PASS A failing stock batch rolls back all preceding adjustments
+PASS Out-of-order delta events retain every movement instead of dropping older versions
+PASS A duplicate event identity with changed data is rejected
+All 16 operational checks passed.

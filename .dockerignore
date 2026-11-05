@@ -1,0 +1,9 @@
+.git
+.venv
+.build
+backups
+.state
+*.pdf
+*.zip
+__pycache__
+tests/benchmark_logs

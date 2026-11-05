@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import shutil
 import threading
 import uuid
 
@@ -18,8 +19,9 @@ checks = 0
 
 
 def execute(sql, database=DATABASE, fail=True):
+    command = [PSQL] if shutil.which(PSQL) else ['docker', 'compose', 'exec', '-T', 'db', 'psql', '-U', ENV['PGUSER']]
     result = subprocess.run(
-        [PSQL, "-X", "-q", "-A", "-t", "-v", "ON_ERROR_STOP=1", "-d", database],
+        command + ["-X", "-q", "-A", "-t", "-v", "ON_ERROR_STOP=1", "-d", database],
         input="SET search_path TO inventory_app, public;\n" + sql,
         text=True, capture_output=True, env=ENV, timeout=30
     )

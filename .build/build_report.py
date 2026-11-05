@@ -78,26 +78,25 @@ def arrow(drawing, x1, y1, x2, y2, label=None):
 
 
 def architecture():
-    d = Drawing(DIAGRAM_WIDTH, 285)
+    d = Drawing(DIAGRAM_WIDTH, 330)
     box(d, 125, 245, 240, 35, 'Customers and warehouse operators')
     box(d, 125, 180, 240, 42, 'InventoryClient or SQL sessions', ['Primary commands and WAL-aware reads'])
-    box(d, 10, 70, 210, 68, 'PostgreSQL primary :55434',
+    box(d, 10, 90, 210, 68, 'PostgreSQL primary :55434',
         ['Stock, reservations, transfers', 'Atomic inventory event records', 'Dedicated replication role and slot'])
-    box(d, 270, 70, 210, 68, 'Asynchronous replica :55435',
-        ['Initial pg_basebackup', 'Streaming WAL replay', 'Read-only inventory queries'])
-    box(d, 0, 180, 105, 42, 'Expiry iteration', ['Releases due holds'])
+    box(d, 270, 90, 210, 68, 'Synchronous standby :55435',
+        ['Acknowledges durable WAL receipt', 'Replay may still lag', 'Fresh or advisory inventory reads'])
+    box(d, 0, 180, 105, 42, 'Expiry worker', ['Automatic cleanup'])
     arrow(d, 245, 245, 245, 222)
-    arrow(d, 180, 180, 150, 138)
-    arrow(d, 320, 180, 365, 138)
-    arrow(d, 52, 180, 52, 138)
-    arrow(d, 220, 104, 270, 104)
-    d.add(String(229, 114, 'WAL', fontName='Helvetica', fontSize=8, fillColor=INK))
-    d.add(String(156, 151, 'writes', fontName='Helvetica', fontSize=8, fillColor=INK))
-    d.add(String(350, 151, 'reads', fontName='Helvetica', fontSize=8, fillColor=INK))
-    d.add(String(10, 40, 'Read rule: reach the sampled WAL position within 250 ms, or use the primary.',
-                 fontName='Helvetica', fontSize=8.5, fillColor=INK))
-    d.add(String(10, 22, 'One primary owns all warehouse balances. One asynchronous standby serves reads.',
-                 fontName='Helvetica', fontSize=8.5, fillColor=INK))
+    arrow(d, 180, 180, 150, 158)
+    arrow(d, 320, 180, 365, 158)
+    arrow(d, 52, 180, 52, 158)
+    arrow(d, 220, 124, 270, 124)
+    d.add(String(229, 134, 'WAL', fontName='Helvetica', fontSize=8, fillColor=INK))
+    box(d, 10, 5, 210, 48, 'Outbox relay worker', ['Recoverable leases; retry after failure'])
+    box(d, 270, 5, 210, 48, 'Projection database :55436', ['Durable inbox and movement totals'])
+    arrow(d, 115, 90, 115, 53)
+    arrow(d, 220, 29, 270, 29)
+    d.add(String(224, 39, 'events', fontName='Helvetica', fontSize=8, fillColor=INK))
     return d
 
 
@@ -117,14 +116,24 @@ def erd():
     arrow(d, 145, 46, 173, 46)
     d.add(String(147, 54, '1 : n', fontSize=7.5, fillColor=INK))
     arrow(d, 355, 150, 420, 90, '1 : many')
-    combined = Drawing(DIAGRAM_WIDTH, 410)
+    combined = Drawing(DIAGRAM_WIDTH, 540)
     core = Group(*d.contents)
-    core.translate(0, 110)
+    core.translate(0, 240)
     combined.add(core)
-    box(combined, 0, 5, 210, 85, 'STOCK ADJUSTMENTS',
+    box(combined, 0, 180, 145, 50, 'INVENTORY (reference)', ['PK warehouse_id, product_id'])
+    box(combined, 173, 180, 145, 50, 'PRODUCTS (reference)', ['PK product_id'])
+    box(combined, 345, 180, 145, 50, 'WAREHOUSES (reference)', ['PK warehouse_id'])
+    box(combined, 0, 45, 210, 85, 'STOCK ADJUSTMENTS',
         ['PK operation_id', 'FK warehouse_id, product_id', 'delta, reason, created_at'])
-    box(combined, 280, 5, 210, 85, 'WAREHOUSE TRANSFERS',
+    box(combined, 280, 45, 210, 85, 'WAREHOUSE TRANSFERS',
         ['PK transfer_id, FK product_id', 'FK source and destination warehouse', 'quantity, status, dispatch / receipt times'])
+    arrow(combined, 72, 180, 72, 130, '1 : many')
+    arrow(combined, 245, 180, 300, 130, '1 : many')
+    arrow(combined, 395, 180, 365, 130)
+    arrow(combined, 450, 180, 440, 130)
+    combined.add(String(348, 157, 'source', fontName='Helvetica', fontSize=7, fillColor=INK))
+    combined.add(String(440, 151, 'destination', fontName='Helvetica', fontSize=7, fillColor=INK))
+    combined.add(String(0, 15, 'Reference boxes repeat existing entities to keep all foreign-key relationships readable.', fontName='Helvetica', fontSize=8, fillColor=INK))
     return combined
 
 
@@ -157,7 +166,7 @@ def footer(canvas, document):
     canvas.setFillColor(colors.black)
     canvas.drawRightString(A4[0]-MARGIN, A4[1]-36, str(document.page))
     if COMPACT:
-        canvas.drawString(MARGIN, A4[1]-36, 'Database Design | Problem 2 | Verified 4 November 2026')
+        canvas.drawString(MARGIN, A4[1]-36, 'Database Design | Problem 2 | Verified 5 November 2026')
 
 
 lines = (ROOT / 'REPORT.md').read_text(encoding='utf-8').splitlines()
@@ -240,7 +249,7 @@ while i < len(lines):
                        'Failure': 'Failure scenarios and recovery behavior',
                        'Step': 'Competing transactions for the last item',
                        'Suite': 'Observed test-suite results',
-                       'Check': 'Individual verification results'}[rows[0][0]]
+                       'Check': 'Individual verification results'}.get(rows[0][0], 'Design decisions and measured results')
         story.extend([Paragraph(f'Table {table_number}', styles['FigureNumber']), Paragraph(table_title, styles['FigureCaption'])])
         story.extend([table, Spacer(1, 10)])
     else:
@@ -265,7 +274,7 @@ document = ReportDocument(
     str(output), pagesize=A4,
     rightMargin=MARGIN, leftMargin=MARGIN, topMargin=72 if not COMPACT else 58, bottomMargin=MARGIN,
     title='Inventory Management Database Design', author='',
-    subject='Eight assignment answers, replication, transfers and 46 verified checks'
+    subject='Database design, measured capacity, synchronous replication and tested recovery'
 )
 document.addPageTemplates(PageTemplate(id='Body', frames=Frame(MARGIN, MARGIN, WIDTH, A4[1]-MARGIN-document.topMargin, leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0), onPage=footer))
 document.build(story)

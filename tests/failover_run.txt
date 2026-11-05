@@ -1,0 +1,6 @@
+PASS Former primary container is removed before standby promotion
+PASS The fenced standby becomes the new primary
+PASS Promotion preserves the reservation acknowledged by the former primary
+PASS A fresh synchronous standby is rebuilt before checkout resumes
+PASS Checkout resumes through the promoted primary with synchronous durability
+All 5 failover checks passed. Recovery: 4.8s.

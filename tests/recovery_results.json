@@ -1,0 +1,7 @@
+{
+  "timestamp_utc": "2026-11-05T15:48:36.708167+00:00",
+  "backup_sha256": "ac265fbd0c36a06e6957a802f164f189c74fe7da5f72263012ecd065a1e51e3e",
+  "restore_seconds": 1.852,
+  "primary_crash_recovery_seconds": 5.639,
+  "checks_passed": 9
+}

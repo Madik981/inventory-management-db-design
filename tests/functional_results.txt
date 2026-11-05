@@ -1,0 +1,29 @@
+PASS 20 simultaneous buyers produce one reservation for one item
+PASS All losing buyers receive an explicit insufficient stock error
+PASS Concurrent duplicate confirmations consume stock once
+PASS Concurrent duplicate reservation requests reserve only once
+PASS Reusing an order ID with changed items is rejected
+PASS Duplicate cancellation releases stock once
+PASS A failed multiwarehouse reservation rolls back all earlier items
+PASS Expiry and late confirmation cannot both consume or release stock
+PASS Duplicate concurrent deliveries add physical stock once
+PASS Negative adjustments cannot consume reserved units
+PASS Transaction rollback leaves no held stock
+PASS Early expiry does not release a valid reservation
+PASS Cancellation after confirmation does not recreate sold stock
+PASS Concurrent transfer requests create one transfer without moving stock
+PASS Changed transfer payload is rejected
+PASS Receipt before dispatch is rejected
+PASS Rolled-back dispatch leaves stock and events unchanged
+PASS Repeated dispatch deducts once and leaves destination unavailable in transit
+PASS Source plus destination plus in-transit stock is conserved
+PASS Dispatched goods cannot be cancelled back into source stock
+PASS Rolled-back receipt also rolls back new destination row
+PASS Concurrent receipts provision destination and credit exactly once
+PASS A delayed duplicate dispatch cannot deduct received goods again
+PASS A purchase and a transfer competing for the last unit have one winner
+PASS Dispatch cannot consume reserved units and a failed attempt remains retryable
+PASS Cancellation is idempotent and prevents future dispatch
+PASS A lost shipment stays deducted and cannot later be received
+PASS Concurrent receipt and loss resolve to one terminal decision
+All 28 checks passed.

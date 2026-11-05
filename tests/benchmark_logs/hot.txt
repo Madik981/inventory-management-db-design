@@ -1,0 +1,13 @@
+pgbench (17.11)
+transaction type: /benchmarks/hot.sql
+scaling factor: 1
+query mode: simple
+number of clients: 32
+number of threads: 8
+maximum number of tries: 1
+duration: 30 s
+number of transactions actually processed: 2409
+number of failed transactions: 0 (0.000%)
+latency average = 401.590 ms
+initial connection time = 23.884 ms
+tps = 79.683291 (without initial connection time)

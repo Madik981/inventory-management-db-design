@@ -1,0 +1,13 @@
+pgbench (17.11)
+transaction type: /benchmarks/checkout.sql
+scaling factor: 1
+query mode: simple
+number of clients: 32
+number of threads: 8
+maximum number of tries: 1
+duration: 30 s
+number of transactions actually processed: 31220
+number of failed transactions: 0 (0.000%)
+latency average = 30.757 ms
+initial connection time = 28.003 ms
+tps = 1040.400081 (without initial connection time)
