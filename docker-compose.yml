@@ -28,9 +28,7 @@ services:
       - "127.0.0.1:${PRIMARY_PORT:-55434}:5432"
     volumes:
       - primary_data:/var/lib/postgresql/data
-      - ./benchmarks:/benchmarks:ro
       - ./ops:/ops:ro
-      - ./defense.sql:/defense/defense.sql:ro
       - ./sql:/defense/sql:ro
       - ./docker/00_replication.sh:/docker-entrypoint-initdb.d/00_replication.sh:ro
       - ./sql/01_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro

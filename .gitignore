@@ -5,3 +5,4 @@ backups/
 .state/
 .build/final_review/
 .build
+~$*.pptx

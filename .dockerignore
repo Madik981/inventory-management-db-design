@@ -3,7 +3,8 @@
 .build
 backups
 .state
+presentation
+tests
 *.pdf
 *.zip
 __pycache__
-tests/benchmark_logs

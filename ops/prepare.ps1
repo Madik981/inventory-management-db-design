@@ -8,4 +8,6 @@ if (-not (Test-Path -LiteralPath '.venv/Scripts/python.exe')) {
 if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed' }
 docker compose up -d --build --wait
 if ($LASTEXITCODE -ne 0) { throw 'Database startup failed' }
-Write-Output 'Ready. Run ./ops/check.ps1 or follow DEFENSE_WALKTHROUGH.md.'
+& ./.venv/Scripts/python.exe -X utf8 -B inventory_console.py --setup --status
+if ($LASTEXITCODE -ne 0) { throw 'Console database preparation failed' }
+Write-Output 'Ready. Run ./start_console.cmd. Choose D for defense scenarios and S to show SQL.'

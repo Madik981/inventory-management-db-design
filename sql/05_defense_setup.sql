@@ -29,4 +29,4 @@ INSERT INTO warehouses VALUES
 INSERT INTO inventory (warehouse_id, product_id, on_hand) VALUES
     (1, 17, 100), (2, 17, 50), (3, 17, 25), (1, 99, 1);
 
-SELECT 'The inventory_defense database is ready. Run defense.sql.' AS result;
+SELECT 'The inventory_defense database is ready. Run defense_session_a.sql and defense_session_b.sql in two terminals with --single-step.' AS result;

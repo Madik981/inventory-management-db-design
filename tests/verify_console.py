@@ -189,7 +189,7 @@ class IntegrationTests(unittest.TestCase):
             c.invariants()
 
     def test_cli_sql_output_and_exit_status(self):
-        result = subprocess.run([sys.executable, '-X', 'utf8', 'inventory_console.py',
+        result = subprocess.run([sys.executable, '-X', 'utf8', '-B', 'inventory_console.py',
                                  '--database', self.name, '--demo', 'partitioning', '--no-pause', '--show-sql'],
                                 cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True,
                                 encoding='utf-8', timeout=30)
