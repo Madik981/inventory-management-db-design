@@ -43,6 +43,26 @@ Setup resets only `inventory_defense`. Workers use `inventory_case2`, so they do
 
 ## Client
 
+Interactive console with ready-made defense scenarios (Russian prompts, SQL shown on demand):
+
+```powershell
+./start_console.cmd
+```
+
+Choose **1** once to prepare the separate `inventory_console` database, then **D** for
+the defense scenarios. **S** toggles SQL, **Q** exits. Regular operations include
+reservations, confirmation/cancellation, receipts, transfers, replica reads and workers.
+The eight scenarios verify real database results, including two-session contention and
+Outbox redelivery after a lost acknowledgement. Existing data is preserved on repeat setup.
+See [CONSOLE_GUIDE_RU.md](CONSOLE_GUIDE_RU.md) for a short walkthrough.
+
+```powershell
+./.venv/Scripts/python.exe -X utf8 inventory_console.py --setup --demo all --no-pause
+./.venv/Scripts/python.exe -X utf8 tests/verify_console.py --integration
+```
+
+The original small read-only CLI also remains available:
+
 ```powershell
 ./.venv/Scripts/python.exe inventory_client.py 1 17
 ./.venv/Scripts/python.exe inventory_client.py 1 17 --authoritative
