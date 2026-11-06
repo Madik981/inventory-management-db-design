@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="700" viewBox="0 0 1280 700" role="img"><title>Изменение складских счётчиков</title>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#6A7C91"/></marker></defs>
+<rect width="1280" height="700" fill="#FFFFFF"/><g font-family="Arial, sans-serif" fill="#182431">
+<text x="50" y="48.0" font-size="34" font-weight="700" fill="#182431">Резерв, подтверждение и освобождение</text>
+<text x="50" y="88.0" font-size="25" font-weight="400" fill="#1769B8">Всегда: available = on_hand − reserved</text>
+<rect x="50" y="165" width="290" height="190" rx="18" fill="#F1F5F9" stroke="#D8E1EB"/>
+<text x="70" y="201.0" font-size="25" font-weight="700" fill="#1769B8">1. До резерва</text>
+<text x="70" y="241.0" font-size="25" font-weight="400" fill="#182431">on_hand = 100</text>
+<text x="70" y="274.75" font-size="25" font-weight="400" fill="#182431">reserved = 0</text>
+<text x="70" y="308.5" font-size="25" font-weight="400" fill="#182431">available = 100</text>
+<rect x="495" y="165" width="290" height="190" rx="18" fill="#FFF6DF" stroke="#D8E1EB"/>
+<text x="515" y="201.0" font-size="25" font-weight="700" fill="#8A6100">2. Резерв на 2</text>
+<text x="515" y="241.0" font-size="25" font-weight="400" fill="#182431">on_hand = 100</text>
+<text x="515" y="274.75" font-size="25" font-weight="400" fill="#182431">reserved = 2</text>
+<text x="515" y="308.5" font-size="25" font-weight="400" fill="#182431">available = 98</text>
+<rect x="940" y="165" width="290" height="190" rx="18" fill="#E5F4EA" stroke="#D8E1EB"/>
+<text x="960" y="201.0" font-size="25" font-weight="700" fill="#217544">3. Подтверждение</text>
+<text x="960" y="241.0" font-size="25" font-weight="400" fill="#182431">on_hand = 98</text>
+<text x="960" y="274.75" font-size="25" font-weight="400" fill="#182431">reserved = 0</text>
+<text x="960" y="308.5" font-size="25" font-weight="400" fill="#182431">available = 98</text>
+<polyline points="340,260 495,260" fill="none" stroke="#6A7C91" stroke-width="2.7" marker-end="url(#arrow)"/>
+<text x="357" y="239.0" font-size="22" font-weight="400" fill="#1769B8">reserve 2</text>
+<polyline points="785,260 940,260" fill="none" stroke="#6A7C91" stroke-width="2.7" marker-end="url(#arrow)"/>
+<text x="798" y="239.0" font-size="22" font-weight="400" fill="#1769B8">confirm 2</text>
+<polyline points="640,355 640,450" fill="none" stroke="#6A7C91" stroke-width="2.7" marker-end="url(#arrow)"/>
+<text x="670" y="409.0" font-size="22" font-weight="400" fill="#1769B8">release / expire</text>
+<rect x="495" y="450" width="290" height="190" rx="18" fill="#E5F4EA" stroke="#D8E1EB"/>
+<text x="515" y="486.0" font-size="25" font-weight="700" fill="#217544">Освобождение</text>
+<text x="515" y="526.0" font-size="25" font-weight="400" fill="#182431">on_hand = 100</text>
+<text x="515" y="559.75" font-size="25" font-weight="400" fill="#182431">reserved = 0</text>
+<text x="515" y="593.5" font-size="25" font-weight="400" fill="#182431">available = 100</text>
+<rect x="50" y="450" width="290" height="190" rx="18" fill="#F1F5F9" stroke="#D8E1EB"/>
+<text x="70" y="486.0" font-size="25" font-weight="700" fill="#1769B8">Что удержано?</text>
+<text x="70" y="526.0" font-size="22" font-weight="400" fill="#182431">Резерв обещает товар,</text>
+<text x="70" y="555.7" font-size="22" font-weight="400" fill="#182431">но ещё не уменьшает</text>
+<text x="70" y="585.4" font-size="22" font-weight="400" fill="#182431">on_hand.</text>
+<rect x="940" y="450" width="290" height="190" rx="18" fill="#F1F5F9" stroke="#D8E1EB"/>
+<text x="960" y="486.0" font-size="25" font-weight="700" fill="#1769B8">Почему остаётся 98?</text>
+<text x="960" y="526.0" font-size="21" font-weight="400" fill="#182431">При confirm уменьшаются</text>
+<text x="960" y="554.35" font-size="21" font-weight="400" fill="#182431">и on_hand, и reserved.</text>
+<text x="960" y="582.7" font-size="21" font-weight="400" fill="#182431">available не списывается</text>
+<text x="960" y="611.05" font-size="21" font-weight="400" fill="#182431">повторно.</text>
+</g></svg>

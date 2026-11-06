@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="680" viewBox="0 0 1280 680" role="img"><title>Разница между сохранением WAL и его применением</title>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#6A7C91"/></marker></defs>
+<rect width="1280" height="680" fill="#FFFFFF"/><g font-family="Arial, sans-serif" fill="#182431">
+<text x="50" y="48.0" font-size="32" font-weight="700" fill="#182431">WAL сохранён ≠ изменение уже видно в SELECT</text>
+<text x="50" y="88.0" font-size="23" font-weight="400" fill="#526172">synchronous_commit = on ждёт долговечного журнала на standby, а не replay.</text>
+<rect x="50" y="170" width="300" height="205" rx="18" fill="#E5F4EA" stroke="#D8E1EB"/>
+<text x="70" y="206.0" font-size="25" font-weight="700" fill="#217544">1. Primary</text>
+<text x="70" y="246.0" font-size="23" font-weight="400" fill="#182431">Резерв зафиксирован.</text>
+<text x="70" y="277.05" font-size="23" font-weight="400" fill="#182431">available = 0</text>
+<text x="70" y="308.1" font-size="23" font-weight="400" fill="#182431">WAL отправлен.</text>
+<rect x="490" y="170" width="300" height="205" rx="18" fill="#FFF6DF" stroke="#D8E1EB"/>
+<text x="510" y="206.0" font-size="25" font-weight="700" fill="#8A6100">2. WAL на standby</text>
+<text x="510" y="246.0" font-size="22" font-weight="400" fill="#182431">Получен и сохранён.</text>
+<text x="510" y="275.7" font-size="22" font-weight="400" fill="#182431">ACK уже возможен.</text>
+<text x="510" y="305.4" font-size="22" font-weight="400" fill="#182431">Данные могут отставать.</text>
+<rect x="930" y="170" width="300" height="205" rx="18" fill="#F1F5F9" stroke="#D8E1EB"/>
+<text x="950" y="206.0" font-size="25" font-weight="700" fill="#1769B8">3. Replay на standby</text>
+<text x="950" y="246.0" font-size="23" font-weight="400" fill="#182431">Журнал применён.</text>
+<text x="950" y="277.05" font-size="23" font-weight="400" fill="#182431">Теперь SELECT видит</text>
+<text x="950" y="308.1" font-size="23" font-weight="400" fill="#182431">available = 0.</text>
+<polyline points="350,275 490,275" fill="none" stroke="#6A7C91" stroke-width="2.7" marker-end="url(#arrow)"/>
+<text x="394" y="253.0" font-size="21" font-weight="400" fill="#1769B8">WAL</text>
+<polyline points="790,275 930,275" fill="none" stroke="#6A7C91" stroke-width="2.7" marker-end="url(#arrow)"/>
+<text x="807" y="253.0" font-size="19" font-weight="400" fill="#1769B8">Применение</text>
+<rect x="50" y="455" width="600" height="155" rx="18" fill="#F1F5F9" stroke="#D8E1EB"/>
+<text x="70" y="491.0" font-size="25" font-weight="700" fill="#1769B8">Что делает клиент</text>
+<text x="70" y="531.0" font-size="22" font-weight="400" fill="#182431">Сравнивает replay LSN и target LSN.</text>
+<text x="70" y="560.7" font-size="22" font-weight="400" fill="#182431">Догнала → читает replica.</text>
+<text x="70" y="590.4" font-size="22" font-weight="400" fill="#182431">Не догнала за 250 мс → читает primary.</text>
+<rect x="710" y="455" width="520" height="155" rx="18" fill="#E5F4EA" stroke="#D8E1EB"/>
+<text x="730" y="491.0" font-size="25" font-weight="700" fill="#217544">Почему покупка всё равно безопасна</text>
+<text x="730" y="531.0" font-size="22" font-weight="400" fill="#182431">Показанный остаток не выдаёт резерв.</text>
+<text x="730" y="560.7" font-size="22" font-weight="400" fill="#182431">Проверка и UPDATE покупки идут на primary.</text>
+<text x="730" y="590.4" font-size="22" font-weight="400" fill="#182431">allow_stale — только явный просмотр.</text>
+</g></svg>
