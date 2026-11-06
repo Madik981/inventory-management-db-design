@@ -5,31 +5,46 @@ replication, warehouse transfers, and Outbox/Inbox delivery.
 
 ## Start
 
-Requirements: Docker Desktop running Linux containers and Python 3.10+.
-Run commands from this project folder in PowerShell.
+Requirements: Docker with Compose (Docker Desktop with Linux containers on Windows),
+Python 3.10+, and GNU Make available as `make`.
+Run commands from this project folder. The Makefile supports Windows, Linux and macOS.
 
 First preparation installs the dependency, starts services, and prepares the console database:
 
 ```powershell
-./ops/prepare.ps1
+make prepare
 ```
 
 On subsequent starts:
 
 ```powershell
-docker compose up -d --wait
-./start_console.cmd
+make start
 ```
 
-You can also double-click `start_console.cmd` after starting the services.
-If PowerShell blocks a script, run its commands manually:
+`make start` starts services, prepares the demo database without resetting its data,
+and opens the console. For an already running stack, use `make console`.
+On Windows, double-clicking `start_console.cmd` also opens the console.
+
+Run `make` or `make help` to list commands:
+
+| Command | Action |
+| --- | --- |
+| `make prepare` | Install dependencies, build/start services, prepare the demo database |
+| `make start` | Start services and open the console |
+| `make console` | Open the console for a running stack |
+| `make check` | Run all eight defense scenarios without pauses |
+| `make test` | Run console unit and integration tests |
+| `make demo SCENARIO=race` | Run a selected scenario with SQL and pauses |
+| `make status` | Show container, replication and inventory health |
+| `make up` | Start services |
+| `make down` | Stop services, retaining database volumes |
+
+Make creates `.venv` when needed and installs dependencies when `requirements.txt`
+changes. It selects `.venv/Scripts/python.exe` on Windows and `.venv/bin/python`
+on Linux/macOS. Override the bootstrap Python command if necessary:
 
 ```powershell
-python -m venv .venv
-./.venv/Scripts/python.exe -m pip install -r requirements.txt
-docker compose up -d --build --wait
-./.venv/Scripts/python.exe -X utf8 -B inventory_console.py --setup --status
-./start_console.cmd
+make prepare PYTHON=python3.13
 ```
 
 ## Present and demonstrate
@@ -76,15 +91,15 @@ or 30 seconds. Replication observes the actual state without stopping nodes.
 Verify the project before presenting:
 
 ```powershell
-./ops/check.ps1
+make check
 ```
 
 This runs all eight scenarios without pauses and checks inventory invariants.
 Individual scenarios can also run directly:
 
 ```powershell
-./.venv/Scripts/python.exe -X utf8 -B inventory_console.py --demo race --show-sql
-./.venv/Scripts/python.exe -X utf8 -B inventory_console.py --demo outbox --show-sql
+make demo SCENARIO=race
+make demo SCENARIO=outbox
 ```
 
 ## Services and data
@@ -110,7 +125,7 @@ movements without the opening stock balance.
 To operate on the main database:
 
 ```powershell
-./start_console.cmd --database inventory_case2
+make console DATABASE=inventory_case2
 ```
 
 Ordinary operations then change main data. Demo setup and fixture-based scenarios
@@ -154,7 +169,7 @@ docker compose exec -T db psql -X -U postgres -d inventory_defense -f /defense/s
 ## Health and configuration
 
 ```powershell
-docker compose ps -a
+make status
 docker compose exec -T db psql -U postgres -d inventory_case2 -f /ops/health.sql
 docker compose logs --tail 10 expiry-worker outbox-worker
 ```
@@ -184,7 +199,8 @@ primary; advisory reads can explicitly allow stale data.
 | `workers.py` | Expiry worker and event relay |
 | `sql/` | Schema, operations, initial data and two-session demonstration |
 | `docker/`, `docker-compose.yml` | Containers, replication and worker image |
-| `ops/` | Preparation, defense verification and health query |
+| `Makefile` | Preparation, startup, defense verification and tests |
+| `ops/` | Health query and backup/restore utility |
 | `presentation/` | Final English presentation with speaker notes |
 | `requirements.txt` | Python dependency |
 | `tests/` | Retained automated checks and recorded results |
@@ -197,7 +213,7 @@ only for a new primary volume.
 The separate test suite and backups are retained. Run console integration checks with:
 
 ```powershell
-./.venv/Scripts/python.exe -X utf8 -B tests/verify_console.py --integration
+make test
 ```
 
 Recovery and failover tests deliberately interrupt database services or create
@@ -215,7 +231,7 @@ Restore checks the backup checksum and creates a new database.
 ## Stop
 
 ```powershell
-docker compose down
+make down
 ```
 
 Named volumes and their data remain. `docker compose down -v` deletes those volumes
